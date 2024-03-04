@@ -1,0 +1,15 @@
+[package]
+name = "lepu"
+version = "0.1.0"
+edition = "2021"
+
+# See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
+
+[dependencies]
+anyhow = "1.0.80"
+bitflags = "2.4.2"
+percent-encoding = "2.3.1"
+roxmltree = "0.18.0"
+simplecss = "0.2.1"
+url = "2.4.0"
+zip = { version = "0.6.6", default-features = false, features = ["deflate"] }
