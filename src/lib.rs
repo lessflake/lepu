@@ -23,8 +23,11 @@ mod tests {
 
     #[test]
     fn it_works() -> anyhow::Result<()> {
-        let mut epub = Epub::from_path(&std::path::Path::new("./example_books/2.epub"))?;
-        epub.traverse_chapter(2, |content, _| match content {
+        let mut epub = Epub::from_path(&std::path::Path::new("./example_books/1.epub"))?;
+        for chapter in epub.chapters() {
+            println!("{:#?}", chapter);
+        }
+        epub.traverse_chapter(4, |content, _| match content {
             Content::Textual(text) => {
                 for (chunk, _) in text.style_chunks() {
                     println!("{}", chunk);

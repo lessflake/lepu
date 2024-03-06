@@ -121,7 +121,26 @@ impl Toc {
     }
 
     pub fn entry(&self, idx: usize) -> Option<&TocEntry> {
-        self.0.get(idx)
+        fn nth_inorder<'a>(
+            entries: &'a [TocEntry],
+            goal: usize,
+            cur: &mut usize,
+        ) -> Option<&'a TocEntry> {
+            for node in entries.iter() {
+                if *cur == goal {
+                    return Some(node);
+                }
+                *cur += 1;
+                if goal < *cur + node.num_children {
+                    return nth_inorder(&node.children, goal, cur);
+                }
+                *cur += node.num_children;
+            }
+
+            None
+        }
+
+        nth_inorder(&self.0, idx, &mut 0)
     }
 }
 
@@ -131,15 +150,27 @@ pub struct TocEntry {
     _fragment: Option<String>,
     idx: usize,
     depth: usize,
+
+    num_children: usize,
+    children: Vec<TocEntry>,
 }
 
 impl TocEntry {
-    pub fn new(name: String, fragment: Option<String>, idx: usize, depth: usize) -> Self {
+    pub fn new(
+        name: String,
+        fragment: Option<String>,
+        idx: usize,
+        depth: usize,
+        num_children: usize,
+        children: Vec<Self>,
+    ) -> Self {
         Self {
             name,
             _fragment: fragment,
             idx,
             depth,
+            num_children,
+            children,
         }
     }
 
@@ -149,6 +180,10 @@ impl TocEntry {
 
     pub fn depth(&self) -> usize {
         self.depth
+    }
+
+    pub fn children(&self) -> impl Iterator<Item = &Self> {
+        self.children.iter()
     }
 }
 

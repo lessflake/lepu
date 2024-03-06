@@ -217,7 +217,8 @@ fn toc_v3(container: &mut Container, spine: &Spine, toc_idx: usize) -> anyhow::R
         entries: &mut Vec<TocEntry>,
         list: Node,
         depth: usize,
-    ) -> anyhow::Result<()> {
+    ) -> anyhow::Result<usize> {
+        let mut children_count = 0;
         for item in list.children().filter(Node::is_element) {
             let mut elements = item.children().filter(Node::is_element);
             let element = elements.next().context("invalid toc item")?;
@@ -242,14 +243,24 @@ fn toc_v3(container: &mut Container, spine: &Spine, toc_idx: usize) -> anyhow::R
                 .context("toc reference missing in spine")?;
             let name = element.text().context("toc item missing name")?.to_owned();
 
-            entries.push(TocEntry::new(name, fragment, idx, depth));
-
+            let mut children = Vec::new();
+            children_count += 1;
             if let Some(list) = elements.next().filter(|e| e.has_tag_name("ol")) {
-                visit_entries(container, spine, toc_uri, entries, list, depth + 1)?;
+                children_count +=
+                    visit_entries(container, spine, toc_uri, &mut children, list, depth + 1)?;
             }
+
+            entries.push(TocEntry::new(
+                name,
+                fragment,
+                idx,
+                depth,
+                children_count - 1,
+                children,
+            ));
         }
 
-        Ok(())
+        Ok(children_count)
     }
 
     visit_entries(container, spine, &toc_uri, &mut entries, list, 0)?;
@@ -275,7 +286,7 @@ fn toc_v2(container: &mut Container, spine: &Spine, ncx_idx: usize) -> anyhow::R
         play_order: &mut Vec<usize>,
         nav_point: Node,
         depth: usize,
-    ) -> anyhow::Result<()> {
+    ) -> anyhow::Result<usize> {
         if let Some(idx) = nav_point
             .attribute("playOrder")
             .map(str::parse)
@@ -310,13 +321,28 @@ fn toc_v2(container: &mut Container, spine: &Spine, ncx_idx: usize) -> anyhow::R
             .and_then(|idx| spine.manifest_indices().position(|i| i == idx))
             .unwrap();
 
-        entries.push(TocEntry::new(name, fragment, idx, depth));
-
+        let mut children = Vec::new();
+        let mut children_count = 1;
         for subpoint in elements {
-            visit_navpoint(container, spine, entries, play_order, subpoint, depth + 1)?;
+            children_count += visit_navpoint(
+                container,
+                spine,
+                &mut children,
+                play_order,
+                subpoint,
+                depth + 1,
+            )?;
         }
 
-        Ok(())
+        entries.push(TocEntry::new(
+            name,
+            fragment,
+            idx,
+            depth,
+            children_count - 1,
+            children,
+        ));
+        Ok(children_count)
     }
 
     let mut entries = Vec::new();
