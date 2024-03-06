@@ -1,5 +1,5 @@
 mod epub;
-pub use epub::Epub;
+pub use epub::{Chapter, Epub};
 
 mod len;
 pub use len::Len;

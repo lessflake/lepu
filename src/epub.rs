@@ -63,7 +63,10 @@ impl Epub {
         callback: impl FnMut(Content<'_>, Option<Align>),
     ) -> anyhow::Result<&str> {
         let toc_entry = self.toc.entry(entry).context("not in toc")?;
-        let manifest_idx = self.spine.get(toc_entry.idx).context("not in spine")?;
+        let manifest_idx = self
+            .spine
+            .get(toc_entry.spine_index)
+            .context("not in spine")?;
         content::traverse(&mut self.container, manifest_idx, replacements, callback)?;
         Ok(toc_entry.name.as_ref())
     }
@@ -86,7 +89,7 @@ impl Epub {
 
     pub fn chapters(
         &self,
-    ) -> impl Iterator<Item = &TocEntry> + DoubleEndedIterator + ExactSizeIterator {
+    ) -> impl Iterator<Item = &Chapter> + DoubleEndedIterator + ExactSizeIterator {
         self.toc.0.iter()
     }
 
@@ -113,19 +116,19 @@ impl Spine {
 }
 
 #[derive(Debug)]
-pub struct Toc(Vec<TocEntry>);
+pub struct Toc(Vec<Chapter>);
 
 impl Toc {
-    pub fn new(entries: Vec<TocEntry>) -> Self {
+    pub fn new(entries: Vec<Chapter>) -> Self {
         Self(entries)
     }
 
-    pub fn entry(&self, idx: usize) -> Option<&TocEntry> {
+    pub fn entry(&self, idx: usize) -> Option<&Chapter> {
         fn nth_inorder<'a>(
-            entries: &'a [TocEntry],
+            entries: &'a [Chapter],
             goal: usize,
             cur: &mut usize,
-        ) -> Option<&'a TocEntry> {
+        ) -> Option<&'a Chapter> {
             for node in entries.iter() {
                 if *cur == goal {
                     return Some(node);
@@ -145,21 +148,23 @@ impl Toc {
 }
 
 #[derive(Debug)]
-pub struct TocEntry {
+pub struct Chapter {
     name: String,
     _fragment: Option<String>,
-    idx: usize,
+    spine_index: usize,
+    toc_index: usize,
     depth: usize,
 
     num_children: usize,
-    children: Vec<TocEntry>,
+    children: Vec<Chapter>,
 }
 
-impl TocEntry {
+impl Chapter {
     pub fn new(
         name: String,
         fragment: Option<String>,
-        idx: usize,
+        spine_index: usize,
+        toc_index: usize,
         depth: usize,
         num_children: usize,
         children: Vec<Self>,
@@ -167,7 +172,8 @@ impl TocEntry {
         Self {
             name,
             _fragment: fragment,
-            idx,
+            spine_index,
+            toc_index,
             depth,
             num_children,
             children,
@@ -184,6 +190,10 @@ impl TocEntry {
 
     pub fn children(&self) -> impl Iterator<Item = &Self> {
         self.children.iter()
+    }
+
+    pub fn index_in_toc(&self) -> usize {
+        self.toc_index
     }
 }
 
