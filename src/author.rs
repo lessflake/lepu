@@ -12,7 +12,6 @@ impl Author {
             return None;
         };
         let block_caps = !raw.chars().any(char::is_lowercase);
-        // TODO: haven't tested this yet
         let mut buf = String::new();
         if !block_caps {
             let (mut first, mut second) = (raw.chars(), raw.chars().skip(1));
@@ -47,25 +46,6 @@ impl Author {
         } else {
             None
         };
-        fn capitalise(s: &str) -> String {
-            let mut buf = String::new();
-            for word in s.split_whitespace() {
-                for ch in word.chars().next().unwrap().to_uppercase() {
-                    buf.push(ch);
-                }
-                if word.len() == 1 {
-                    buf.push_str(". ");
-                } else {
-                    for ch in word.chars().skip(1) {
-                        buf.push(ch);
-                    }
-                }
-            }
-            while buf.chars().last().unwrap().is_whitespace() {
-                buf.pop();
-            }
-            buf
-        }
         Some(Self {
             first: capitalise(given.trim()),
             middles: middles.map(str::trim).map(capitalise),
@@ -85,4 +65,24 @@ impl std::fmt::Display for Author {
         }
         f.write_str(&self.surname)
     }
+}
+
+fn capitalise(s: &str) -> String {
+    let mut buf = String::new();
+    for word in s.split_whitespace() {
+        for ch in word.chars().next().unwrap().to_uppercase() {
+            buf.push(ch);
+        }
+        if word.len() == 1 {
+            buf.push_str(". ");
+        } else {
+            for ch in word.chars().skip(1) {
+                buf.push(ch);
+            }
+        }
+    }
+    while buf.chars().last().unwrap().is_whitespace() {
+        buf.pop();
+    }
+    buf
 }

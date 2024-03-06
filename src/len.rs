@@ -4,6 +4,12 @@ pub struct Len {
     pub chars: usize,
 }
 
+impl Len {
+    pub fn new(bytes: usize, chars: usize) -> Self {
+        Self { bytes, chars }
+    }
+}
+
 impl std::cmp::PartialOrd for Len {
     fn partial_cmp(&self, other: &Self) -> Option<std::cmp::Ordering> {
         Some(self.bytes.cmp(&other.bytes))
@@ -13,12 +19,6 @@ impl std::cmp::PartialOrd for Len {
 impl std::cmp::Ord for Len {
     fn cmp(&self, other: &Self) -> std::cmp::Ordering {
         self.bytes.cmp(&other.bytes)
-    }
-}
-
-impl Len {
-    pub fn new(bytes: usize, chars: usize) -> Self {
-        Self { bytes, chars }
     }
 }
 

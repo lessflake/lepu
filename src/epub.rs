@@ -1,13 +1,13 @@
 use std::{fs, io::Read, path::Path};
 
 use anyhow::Context as _;
-use roxmltree::Node;
+use roxmltree::{Document, Node};
 use simplecss::StyleSheet;
 use url::Url;
 
 use crate::{
     len::Len,
-    style::{Style, Styling},
+    style::{self, Style, Styling},
     util::{normalize_url, parse_hyperlink, trim_end_in_place},
     Author,
 };
@@ -20,6 +20,17 @@ pub struct Epub {
 }
 
 impl Epub {
+    pub fn from_path(path: impl AsRef<std::path::Path>) -> anyhow::Result<Self> {
+        use fs::File;
+
+        let fd = File::open(path)?;
+        Self::from_reader(std::io::BufReader::new(fd))
+    }
+
+    pub fn from_vec(vec: Vec<u8>) -> anyhow::Result<Self> {
+        Self::from_reader(std::io::Cursor::new(vec))
+    }
+
     pub fn from_reader(
         reader: impl std::io::Read + std::io::Seek + 'static,
     ) -> anyhow::Result<Self> {
@@ -73,6 +84,7 @@ impl Epub {
 
 #[derive(Debug)]
 struct Spine(Vec<usize>);
+
 impl Spine {
     fn manifest_indices(&self) -> impl Iterator<Item = usize> + '_ {
         self.0.iter().copied()
@@ -81,6 +93,12 @@ impl Spine {
 
 #[derive(Debug)]
 struct Toc(Vec<TocEntry>);
+
+impl Toc {
+    fn entry(&self, idx: usize) -> Option<&TocEntry> {
+        self.0.get(idx)
+    }
+}
 
 #[derive(Debug)]
 pub struct TocEntry {
@@ -97,19 +115,6 @@ impl TocEntry {
 
     pub fn depth(&self) -> usize {
         self.depth
-    }
-}
-
-impl Epub {
-    pub fn from_path(path: impl AsRef<std::path::Path>) -> anyhow::Result<Self> {
-        use fs::File;
-
-        let fd = File::open(path)?;
-        Self::from_reader(std::io::BufReader::new(fd))
-    }
-
-    pub fn from_vec(vec: Vec<u8>) -> anyhow::Result<Self> {
-        Self::from_reader(std::io::Cursor::new(vec))
     }
 }
 
@@ -137,7 +142,7 @@ impl simplecss::Element for XmlNode<'_, '_> {
     fn pseudo_class_matches(&self, class: simplecss::PseudoClass) -> bool {
         match class {
             simplecss::PseudoClass::FirstChild => self.prev_sibling_element().is_none(),
-            _ => false, // Since we are querying a static XML we can ignore other pseudo-classes.
+            _ => false,
         }
     }
 }
@@ -149,42 +154,67 @@ enum CssAttribute {
 }
 
 impl Epub {
-    pub fn traverse(
+    fn entry_in_manifest(&self, entry: usize) -> Option<usize> {
+        self.toc
+            .0
+            .get(entry)
+            .and_then(|e| self.spine.0.get(e.idx))
+            .copied()
+    }
+
+    pub fn traverse_chapter(
         &mut self,
         entry: usize,
-        replacements: &(&[char], &[&str]),
-        mut cb: impl FnMut(Content<'_>, Option<Align>),
+        callback: impl FnMut(Content<'_>, Option<Align>),
     ) -> anyhow::Result<(&str, &str)> {
-        let item_idx = self.spine.0[self.toc.0[entry].idx];
-        let mut data = self.container.retrieve(item_idx)?;
+        self.traverse_chapter_with_replacements(entry, &[], callback)
+    }
 
+    pub fn traverse_chapter_with_replacements(
+        &mut self,
+        entry: usize,
+        replacements: &'static [(char, &'static str)],
+        callback: impl FnMut(Content<'_>, Option<Align>),
+    ) -> anyhow::Result<(&str, &str)> {
+        // Retrieve chapter data
+        let item_idx = self.entry_in_manifest(entry).context("not found")?;
+        let mut data = self.container.retrieve(item_idx)?;
         // println!("{}", data);
 
-        let xml = match roxmltree::Document::parse(&data) {
-            Ok(x) => x,
+        // Parse XML document into tree
+        // Note that documents are XHTML, so an XML parser is applicable.
+        // However, a DTD accessible by `roxmltree` is not provided, and
+        // `roxmltree` does not provide a means to inject DTD entity
+        // definitions when parsing an XML document.
+        // HACK: If (X)HTML entities are found, `roxmltree` will error due to
+        // lacking the entity definition. Entities are rare, but existent, in
+        // EPUB documents, so in the event they are encountered they are
+        // manually replaced with the corresponding UTF-8 data and the
+        // document is re-parsed.
+        // Potential alternatives:
+        // * Inject custom DTD into data
+        // * Inject entity definitions via future `roxmltree` API
+        //   (Existing issue: https://github.com/RazrFalcon/roxmltree/issues/105)
+        // * Swap XML/XHTML parsing library, however `roxmltree` has favourable
+        //   characteristics for EPUB content
+        let xml = match Document::parse(&data) {
             Err(roxmltree::Error::UnknownEntityReference(name, _)) => {
                 let (needle, replacement) = match name.as_ref() {
                     "nbsp" => ("&nbsp;", " "),
-                    _ => panic!(),
+                    _ => anyhow::bail!("entity needs adding ({name})"),
                 };
 
                 data = data.replace(needle, replacement);
-                roxmltree::Document::parse(&data).unwrap()
+                Document::parse(&data)
             }
-            Err(e) => panic!("{e}"),
-        };
+            x => x,
+        }?;
 
-        let (head, body) = {
-            let mut containers = xml
-                .root_element()
-                .children()
-                .filter(roxmltree::Node::is_element);
-            (
-                containers.next().context("missing head")?,
-                containers.next().context("missing body")?,
-            )
-        };
+        let mut containers = xml.root_element().children().filter(Node::is_element);
+        let head = containers.next().context("missing head")?;
 
+        // Load all linked stylesheets and inline style tags in <head>
+        // These need to be kept alive, as `simplecss` borrows from its input
         let mut raw_stylesheets = Vec::new();
         for node in head.children().filter(Node::is_element) {
             match node.tag_name().name() {
@@ -194,7 +224,7 @@ impl Epub {
                         continue;
                     }
                     let css_item = self.container.resolve_hyperlink(item_idx, href)?;
-                    let css = self.container.retrieve_idx(css_item)?;
+                    let css = self.container.retrieve(css_item)?;
                     raw_stylesheets.push(css);
                 }
                 "style" if matches!(node.attribute("type"), Some("text/css") | None) => {
@@ -204,16 +234,16 @@ impl Epub {
             }
         }
 
-        let mut styles = simplecss::StyleSheet::new();
+        // Parse those stylesheets into a single `simplecss::StyleSheet`
+        let mut stylesheet = StyleSheet::new();
         for style in raw_stylesheets.iter() {
-            styles.parse_more(style);
+            stylesheet.parse_more(style);
         }
 
-        // panic!("{:#?}", styles.rules);
-
+        // Enumerate only CSS rules that need to be matched, all others in the
+        // stylesheet can be ignored
         let mut rules = Vec::new();
-
-        for (i, rule) in styles.rules.iter().enumerate() {
+        for (i, rule) in stylesheet.rules.iter().enumerate() {
             for dec in &rule.declarations {
                 match dec.name {
                     "font-style" if dec.value == "italic" || dec.value.contains("oblique") => {
@@ -241,18 +271,21 @@ impl Epub {
             }
         }
 
-        // panic!("{:#?}", body.document().input_text());
-        traverse_body(
-            body,
-            &mut cb,
-            &replacements,
-            &styles,
-            &rules,
-            Style::empty(),
-            None,
-        )?;
+        let mut parser = ChapterParser {
+            replacements,
+            stylesheet,
+            rules,
 
-        Ok((self.title(), self.toc.0[entry].name.as_ref()))
+            text_buf: String::new(),
+            styling: Styling::builder(),
+
+            callback,
+        };
+
+        let body = containers.next().context("missing body")?;
+        parser.run(body, State::default());
+
+        Ok((self.title(), self.toc.entry(entry).unwrap().name.as_ref()))
     }
 
     pub fn title(&self) -> &str {
@@ -260,32 +293,160 @@ impl Epub {
     }
 }
 
-fn update_style(
-    styles: &StyleSheet,
-    rules: &[(usize, CssAttribute)],
-    node: Node,
-    mut style: Style,
-    mut align: Option<Align>,
-) -> (Style, Option<Align>) {
-    // TODO apply style from inline style attribute
-    for added_style in rules.iter().filter_map(|&(i, style)| {
-        styles.rules[i]
-            .selector
-            .matches(&XmlNode(node))
-            .then_some(style)
-    }) {
-        match added_style {
-            CssAttribute::Style(s) => style |= s,
-            CssAttribute::Align(a) => align = Some(a),
+#[derive(Default, Clone)]
+struct State {
+    style: Style,
+    align: Option<Align>,
+}
+
+struct ChapterParser<'styles, F> {
+    replacements: &'static [(char, &'static str)],
+    stylesheet: StyleSheet<'styles>,
+    rules: Vec<(usize, CssAttribute)>,
+
+    text_buf: String,
+    styling: style::Builder<Len>,
+
+    callback: F,
+}
+
+impl<'styles, F> ChapterParser<'styles, F>
+where
+    F: for<'a> FnMut(Content<'a>, Option<Align>),
+{
+    fn update_style(&self, node: Node, state: &mut State) {
+        // TODO apply style from inline style attribute
+        let style = &mut state.style;
+        let align = &mut state.align;
+
+        for added_style in self.rules.iter().filter_map(|&(i, style)| {
+            self.stylesheet.rules[i]
+                .selector
+                .matches(&XmlNode(node))
+                .then_some(style)
+        }) {
+            match added_style {
+                CssAttribute::Style(s) => *style |= s,
+                CssAttribute::Align(a) => *align = Some(a),
+            }
+        }
+
+        match node.tag_name().name() {
+            "i" | "em" => *style |= Style::ITALIC,
+            "b" | "strong" => *style |= Style::BOLD,
+            "center" => *align = Some(Align::Center),
+            _ => {}
         }
     }
-    match node.tag_name().name() {
-        "i" | "em" => style |= Style::ITALIC,
-        "b" | "strong" => style |= Style::BOLD,
-        "center" => align = Some(Align::Center),
-        _ => {}
+
+    fn add_text_to_buf(&mut self, node: Node, style: Style) {
+        let text = &mut self.text_buf;
+
+        let s = node.text().unwrap();
+
+        if s.is_empty() {
+            return;
+        }
+
+        let start = Len::new(text.len(), text.chars().count());
+
+        if s.chars().next().is_some_and(|c| c.is_ascii_whitespace())
+            && text.chars().last().is_some()
+            && !text.chars().last().unwrap().is_ascii_whitespace()
+        {
+            text.push(' ');
+        }
+
+        for s in s.split_ascii_whitespace() {
+            let mut last_end = 0;
+            let matcher = |a| self.replacements.iter().any(|&(b, _)| a == b);
+            for (start, part) in s.match_indices(matcher) {
+                let part = part.chars().next().unwrap();
+                let rep_idx = self
+                    .replacements
+                    .iter()
+                    .position(|&(c, _)| c == part)
+                    .unwrap();
+                let to = self.replacements[rep_idx].1;
+                let chunk = &s[last_end..start];
+                text.push_str(chunk);
+                text.push_str(to);
+                last_end = start + part.len_utf8();
+            }
+            text.push_str(&s[last_end..s.len()]);
+            text.push(' ');
+        }
+
+        if text.len() > start.bytes && s.chars().last().is_some_and(|c| !c.is_ascii_whitespace()) {
+            text.pop();
+        }
+
+        let end = Len::new(
+            text.len(),
+            start.chars + text[start.bytes..].chars().count(),
+        );
+
+        self.styling.add(style, start..end);
     }
-    (style, align)
+
+    fn accumulate_text(&mut self, node: Node, state: &State) {
+        self.text_buf.clear();
+        self.styling = Styling::builder();
+        self.accumulate_text_(node, state.clone());
+        trim_end_in_place(&mut self.text_buf);
+    }
+
+    fn accumulate_text_(&mut self, node: Node, mut state: State) {
+        self.update_style(node, &mut state);
+
+        if node.is_text() {
+            self.add_text_to_buf(node, state.style);
+        } else if node.tag_name().name().trim() == "br" {
+            self.text_buf.push('\n');
+        }
+
+        for child in node.children() {
+            self.accumulate_text_(child, state.clone());
+        }
+    }
+
+    fn emit_text(&mut self, kind: TextContentKind, state: &State) {
+        if !self.text_buf.is_empty() {
+            let content = Content::Textual {
+                text: &self.text_buf,
+                styling: self.styling.build(),
+                kind,
+            };
+            (self.callback)(content, state.align);
+        }
+    }
+
+    fn run(&mut self, node: Node, mut state: State) {
+        self.update_style(node, &mut state);
+
+        match node.tag_name().name() {
+            "h1" | "h2" | "h3" | "h4" | "h5" | "h6" => {
+                self.accumulate_text(node, &state);
+                self.emit_text(TextContentKind::Header, &state);
+            }
+            "p" => {
+                self.accumulate_text(node, &state);
+                self.emit_text(TextContentKind::Paragraph, &state);
+            }
+            "blockquote" => {
+                self.accumulate_text(node, &state);
+                self.emit_text(TextContentKind::Quote, &state);
+            }
+            n if n == "image" || (n == "img" && node.has_attribute("src")) => {
+                (self.callback)(Content::Image, state.align);
+            }
+            _ => {
+                for child in node.children() {
+                    self.run(child, state.clone());
+                }
+            }
+        }
+    }
 }
 
 #[derive(Debug, Clone, Copy)]
@@ -296,170 +457,18 @@ pub enum Align {
 }
 
 pub enum Content<'a> {
-    Header(&'a str, Styling<Len>),
-    Paragraph(&'a str, Styling<Len>),
-    Quote(&'a str, Styling<Len>),
+    Textual {
+        kind: TextContentKind,
+        text: &'a str,
+        styling: Styling<Len>,
+    },
     Image,
 }
 
-fn traverse_body(
-    node: roxmltree::Node,
-    cb: &mut impl FnMut(Content<'_>, Option<Align>),
-    replacements: &(&[char], &[&str]),
-    styles: &StyleSheet,
-    rules: &[(usize, CssAttribute)],
-    style: Style,
-    align: Option<Align>,
-) -> anyhow::Result<bool> {
-    fn recurse(
-        node: roxmltree::Node,
-        cb: &mut impl FnMut(Content<'_>, Option<Align>),
-        replacements: &(&[char], &[&str]),
-        styles: &StyleSheet,
-        rules: &[(usize, CssAttribute)],
-        style: Style,
-        align: Option<Align>,
-    ) -> anyhow::Result<bool> {
-        for node in node.children() {
-            if traverse_body(node, cb, replacements, styles, rules, style, align)? {
-                return Ok(true);
-            }
-        }
-        Ok(false)
-    }
-
-    fn accumulate_text(
-        node: roxmltree::Node,
-        replacements: &(&[char], &[&str]),
-        styles: &StyleSheet,
-        rules: &[(usize, CssAttribute)],
-        style: Style,
-        align: Option<Align>,
-    ) -> anyhow::Result<(String, Styling<Len>)> {
-        let mut text = String::new();
-        let mut styling = Styling::builder();
-        traverse_block(
-            node,
-            replacements,
-            styles,
-            rules,
-            style,
-            align,
-            &mut text,
-            &mut styling,
-        )?;
-        trim_end_in_place(&mut text);
-        Ok((text, styling.build()))
-    }
-
-    // panic!("{}", node.document().input_text());
-    let (style, align) = update_style(styles, rules, node, style, align);
-
-    match node.tag_name().name() {
-        "h1" | "h2" | "h3" | "h4" | "h5" | "h6" => {
-            let (text, styling) = accumulate_text(node, replacements, styles, rules, style, align)?;
-            // println!("emitting text: {}", text);
-            if !text.is_empty() {
-                cb(Content::Header(&text, styling), align);
-            }
-        }
-        "p" => {
-            let (text, styling) = accumulate_text(node, replacements, styles, rules, style, align)?;
-            // println!("emitting para text: {}", text);
-            if !text.is_empty() {
-                cb(Content::Paragraph(&text, styling), align);
-            }
-        }
-        "blockquote" => {
-            let (text, styling) = accumulate_text(node, replacements, styles, rules, style, align)?;
-            // println!("emitting quote text: {}", text);
-            if !text.is_empty() {
-                cb(Content::Quote(&text, styling), align);
-            }
-        }
-        n if n == "image" || (n == "img" && node.has_attribute("src")) => {
-            cb(Content::Image, align);
-        }
-        _ => _ = recurse(node, cb, replacements, styles, rules, style, align)?,
-    }
-    Ok(false)
-}
-
-fn traverse_block(
-    node: roxmltree::Node,
-    replacements: &(&[char], &[&str]),
-    styles: &StyleSheet,
-    rules: &[(usize, CssAttribute)],
-    style: Style,
-    align: Option<Align>,
-    text: &mut String,
-    styling: &mut crate::style::Builder<Len>,
-) -> anyhow::Result<bool> {
-    if node.is_text() {
-        let s = node.text().context("invalid text node")?;
-
-        if !s.is_empty() {
-            let start = Len::new(text.len(), text.chars().count());
-
-            if s.chars().next().is_some_and(|c| c.is_ascii_whitespace())
-                && text.chars().last().is_some()
-                && !text.chars().last().unwrap().is_ascii_whitespace()
-            {
-                text.push(' ');
-            }
-
-            for s in s.split_ascii_whitespace() {
-                let mut last_end = 0;
-                for (start, part) in s.match_indices(replacements.0) {
-                    let part = part.chars().next().unwrap();
-                    let rep_idx = replacements.0.iter().position(|&c| c == part).unwrap();
-                    let to = replacements.1[rep_idx];
-                    let chunk = &s[last_end..start];
-                    text.push_str(chunk);
-                    text.push_str(to);
-                    last_end = start + part.len_utf8();
-                }
-                text.push_str(&s[last_end..s.len()]);
-                text.push(' ');
-            }
-
-            if text.len() > start.bytes
-                && s.chars().last().is_some_and(|c| !c.is_ascii_whitespace())
-            {
-                text.pop();
-            }
-
-            let end = Len::new(
-                text.len(),
-                start.chars + text[start.bytes..].chars().count(),
-            );
-
-            styling.add(style, start..end);
-        }
-        return Ok(false);
-    }
-
-    let (style, align) = update_style(styles, rules, node, style, align);
-
-    if node.tag_name().name().trim() == "br" {
-        text.push('\n');
-    }
-
-    for node in node.children() {
-        if traverse_block(
-            node,
-            replacements,
-            styles,
-            rules,
-            style,
-            align,
-            text,
-            styling,
-        )? {
-            return Ok(true);
-        }
-    }
-    Ok(false)
+pub enum TextContentKind {
+    Header,
+    Paragraph,
+    Quote,
 }
 
 #[derive(Debug, Clone)]
@@ -509,23 +518,8 @@ impl Container {
         Ok(data)
     }
 
-    pub fn retrieve_idx(&mut self, item: usize) -> anyhow::Result<String> {
-        let item = &self.manifest.0[item];
-        let abs_path = self.name_in_archive(&item.path);
-        let mut data = String::new();
-        self.archive.read_into(&abs_path, &mut data)?;
-        Ok(data)
-    }
-
-    // fn uri_between_items(&self, from: usize, to: usize) -> anyhow::Result<Url> {
-    //     let from = &self.manifest.0[from].path;
-    //     let to = &self.manifest.0[to].path;
-    //     Ok(Url::parse("epub:/")?.join(from)?.join(to)?)
-    // }
-
     pub fn item_uri(&self, idx: usize) -> &Url {
         &self.manifest.0[idx].path
-        // Ok(Url::parse("epub:/")?.join(path)?)
     }
 
     pub fn resolve_hyperlink(&self, item: usize, href: &str) -> anyhow::Result<usize> {
@@ -541,6 +535,59 @@ impl Container {
 
 struct Archive(zip::ZipArchive<Box<dyn ZipRead>>);
 
+impl Archive {
+    fn new(reader: impl std::io::Read + std::io::Seek + 'static) -> anyhow::Result<Self> {
+        let reader: Box<dyn ZipRead> = Box::new(reader);
+        Ok(Self(zip::ZipArchive::new(reader)?))
+    }
+
+    fn read_into(&mut self, file: &str, buf: &mut String) -> anyhow::Result<()> {
+        buf.clear();
+        self.0.by_name(file)?.read_to_string(buf)?;
+        Ok(())
+    }
+
+    fn rootfile<'a>(&mut self, buf: &'a mut String) -> anyhow::Result<Rootfile<'a>> {
+        self.read_into("META-INF/container.xml", buf)?;
+        let container = Document::parse(buf)?;
+
+        let rootfile_path = container
+            .descendants()
+            .find(|n| n.has_tag_name("rootfile"))
+            .context("missing rootfile")
+            .and_then(|rf| rf.attribute("full-path").context("rootfile missing path"))?
+            .to_owned();
+
+        let root = {
+            let path = Path::new(&rootfile_path);
+            anyhow::ensure!(path.is_relative(), "rootfile path not relative");
+            let p = path.parent().unwrap();
+            let mut path_str = p.to_string_lossy().into_owned();
+            path_str.push('/');
+            let url = Url::parse("epub:/")?.join(&path_str)?;
+            url
+        };
+
+        let rootfile = {
+            self.read_into(&rootfile_path, buf)?;
+            Document::parse(buf)?
+        };
+
+        Ok(Rootfile {
+            inner: rootfile,
+            root,
+        })
+    }
+}
+
+#[derive(Debug)]
+struct Metadata {
+    identifier: String,
+    title: String,
+    language: String,
+    creators: Vec<crate::Author>,
+}
+
 #[derive(Debug, Copy, Clone)]
 pub enum Version {
     V2(usize),
@@ -548,7 +595,7 @@ pub enum Version {
 }
 
 struct Rootfile<'a> {
-    inner: roxmltree::Document<'a>,
+    inner: Document<'a>,
     root: Url,
 }
 
@@ -558,10 +605,8 @@ impl Rootfile<'_> {
             .inner
             .root_element()
             .attribute("version")
-            .context("rootfile missing version")?
-            .as_bytes()[0]
-            - b'0';
-        Ok(version)
+            .context("missing version")?;
+        Ok(version.as_bytes()[0] - b'0')
     }
 
     fn metadata(&self) -> anyhow::Result<Metadata> {
@@ -569,7 +614,7 @@ impl Rootfile<'_> {
             .inner
             .root_element()
             .first_element_child()
-            .context("rootfile missing metadata")?;
+            .context("missing metadata")?;
 
         let mut identifier = None;
         let mut title = None;
@@ -600,13 +645,6 @@ impl Rootfile<'_> {
             }
         }
 
-        // if let Some(title) = &title {
-        //     print!("{}", title);
-        //     if let Some(creator) = creators.first() {
-        //         print!(" by {}", creator);
-        //     }
-        //     println!();
-        // }
         Ok(Metadata {
             identifier: identifier.context("missing identifier")?,
             title: title.context("missing title")?,
@@ -635,7 +673,6 @@ impl Rootfile<'_> {
             let href = child
                 .attribute("href")
                 .context("manifest item missing href")?;
-            // let path = String::from(href);
             let path = self.root.join(href)?;
             let normalized_path = normalize_url(&path);
             let mime = child
@@ -713,7 +750,7 @@ impl Rootfile<'_> {
         }
 
         let data = container.retrieve(toc_idx)?;
-        let xml = roxmltree::Document::parse(&data)?;
+        let xml = Document::parse(&data)?;
         let mut elements = xml.root_element().children().filter(Node::is_element);
         let _head = elements.next().context("toc missing head")?;
         let body = elements.next().context("toc missing body")?;
@@ -724,9 +761,7 @@ impl Rootfile<'_> {
             .children()
             .filter(Node::is_element)
             .nth(1)
-            // .find(|n| n.tag_name().name() == "ol")
             .context("toc missing navlist")?;
-        // println!("{:?}", list.document());
         let toc_uri = container.item_uri(toc_idx);
 
         fn visit_entries(
@@ -783,8 +818,7 @@ impl Rootfile<'_> {
 
     fn toc_v2(container: &mut Container, spine: &Spine, ncx_idx: usize) -> anyhow::Result<Toc> {
         let data = container.retrieve(ncx_idx)?;
-        // panic!("{}", data);
-        let xml = roxmltree::Document::parse(&data).unwrap();
+        let xml = Document::parse(&data).unwrap();
 
         let nav_map = xml
             .root_element()
@@ -801,7 +835,6 @@ impl Rootfile<'_> {
             nav_point: Node,
             depth: usize,
         ) -> anyhow::Result<()> {
-            // let id = nav_point.attribute("id").unwrap();
             if let Some(idx) = nav_point
                 .attribute("playOrder")
                 .map(str::parse)
@@ -821,12 +854,6 @@ impl Rootfile<'_> {
                 .next()
                 .and_then(|e| e.attribute("src"))
                 .context("nav point is missing src attribute")?;
-            // panic!(
-            //     "{}",
-            //     archive.parse_hyperlink(dbg!(&archive.manifest.0[ncx].path), content)?
-            // );
-
-            // println!("content: {}", content);
 
             let (path, fragment) = match content.rsplit_once('#') {
                 Some((path, frag)) => (path, Some(frag).map(ToOwned::to_owned)),
@@ -836,18 +863,11 @@ impl Rootfile<'_> {
             let path = container.root.join(&path).unwrap();
             let norm = normalize_url(&path);
 
-            // println!("{}", path);
             let idx = container
                 .items()
-                .position(|item| {
-                    // println!("{}, {}", item.path, path);
-                    // item.path.to_lowercase() == path
-                    // match_urls(&item.path, &path)
-                    item.normalized_path == norm
-                })
+                .position(|item| item.normalized_path == norm)
                 .and_then(|idx| spine.manifest_indices().position(|i| i == idx))
                 .unwrap();
-            // .unwrap_or(0);
 
             entries.push(TocEntry {
                 name,
@@ -879,72 +899,7 @@ impl Rootfile<'_> {
                 0,
             )?;
         }
-        // if !play_order.is_empty() {
-        //     assert_eq!(
-        //         entries.len(),
-        //         play_order.len(),
-        //         "if one ncx entry has a play order attribute, they all should",
-        //     );
-        //     let mut zipped = play_order.into_iter().zip(entries).collect::<Vec<_>>();
-        //     zipped.sort_by_key(|(play_order, _)| *play_order);
-        //     entries = zipped.into_iter().map(|(_, e)| e).collect();
-        // }
-
-        // panic!("{:#?}", entries);
 
         Ok(Toc(entries))
     }
-}
-
-impl Archive {
-    fn new(reader: impl std::io::Read + std::io::Seek + 'static) -> anyhow::Result<Self> {
-        let reader: Box<dyn ZipRead> = Box::new(reader);
-        Ok(Self(zip::ZipArchive::new(reader)?))
-    }
-
-    fn read_into(&mut self, file: &str, buf: &mut String) -> anyhow::Result<()> {
-        buf.clear();
-        self.0.by_name(file)?.read_to_string(buf)?;
-        Ok(())
-    }
-
-    fn rootfile<'a>(&mut self, buf: &'a mut String) -> anyhow::Result<Rootfile<'a>> {
-        self.read_into("META-INF/container.xml", buf)?;
-        let container = roxmltree::Document::parse(buf)?;
-
-        let rootfile_path = container
-            .descendants()
-            .find(|n| n.has_tag_name("rootfile"))
-            .context("missing rootfile")
-            .and_then(|rf| rf.attribute("full-path").context("rootfile missing path"))?
-            .to_owned();
-
-        let root = {
-            let path = Path::new(&rootfile_path);
-            anyhow::ensure!(path.is_relative(), "rootfile path not relative");
-            let p = path.parent().unwrap();
-            let mut path_str = p.to_string_lossy().into_owned();
-            path_str.push('/');
-            let url = Url::parse("epub:/")?.join(&path_str)?;
-            url
-        };
-
-        let rootfile = {
-            self.read_into(&rootfile_path, buf)?;
-            roxmltree::Document::parse(buf)?
-        };
-
-        Ok(Rootfile {
-            inner: rootfile,
-            root,
-        })
-    }
-}
-
-#[derive(Debug)]
-struct Metadata {
-    identifier: String,
-    title: String,
-    language: String,
-    creators: Vec<crate::Author>,
 }

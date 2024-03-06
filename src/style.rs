@@ -1,7 +1,7 @@
 use std::marker::PhantomData;
 
 bitflags::bitflags! {
-    #[derive(Debug, Copy, Clone, PartialEq, Eq, PartialOrd, Ord)]
+    #[derive(Debug, Default, Copy, Clone, PartialEq, Eq, PartialOrd, Ord)]
     pub struct Style: u8 {
         const ITALIC = 0b1;
         const BOLD   = 0b10;
@@ -112,11 +112,6 @@ where
 
 impl<T: Ord + Copy> Styling<T> {
     pub fn iter(&self, start: T, end: T) -> StylingIter<'_, T> {
-        // pub fn iter(&self, range: impl std::ops::RangeBounds<T>) -> StylingIter<'_, T> {
-        //     let start = match range.start_bound() {
-        //         std::ops::Bound::Unbounded => self.starts[0].range.start,
-        //         std::ops::Bound::Included(&x) => x,
-        //     };
         assert!(end >= start);
         let end_idx = self.ends.partition_point(|s| s.range.end <= start);
         let start_idx = self
@@ -193,7 +188,9 @@ where
         if next_pos <= self.idx {
             self.ended = true;
             return None;
-        } else if next_pos >= self.end {
+        }
+
+        if next_pos >= self.end {
             self.ended = true;
             next_pos = self.end;
         }
