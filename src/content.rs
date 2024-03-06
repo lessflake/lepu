@@ -9,14 +9,37 @@ use crate::{
 };
 
 pub enum Content<'a> {
-    Textual {
-        kind: TextualKind,
-        text: &'a str,
-        styling: Styling<Len>,
-    },
+    Textual(TextContent<'a>),
     Image,
 }
 
+pub struct TextContent<'a> {
+    kind: TextualKind,
+    text: &'a str,
+    len: Len,
+    styling: Styling<Len>,
+}
+
+impl<'a> TextContent<'a> {
+    pub fn text(&self) -> &str {
+        self.text
+    }
+
+    pub fn kind(&self) -> TextualKind {
+        self.kind
+    }
+
+    pub fn style_chunks(&self) -> impl Iterator<Item = (&'a str, Style)> + '_ {
+        let mut cur = Len::default();
+        self.styling.iter(cur, self.len).map(move |(style, len)| {
+            let start = cur;
+            cur += len;
+            (&self.text[start.bytes..cur.bytes], style)
+        })
+    }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum TextualKind {
     Header,
     Paragraph,
@@ -42,6 +65,7 @@ struct Parser<'styles, F> {
     rules: Vec<(usize, CssAttribute)>,
 
     text_buf: String,
+    text_len: Len,
     styling: style::Builder<Len>,
 
     callback: F,
@@ -153,6 +177,7 @@ pub fn traverse(
         stylesheet,
         rules,
         text_buf: String::new(),
+        text_len: Len::default(),
         styling: Styling::builder(),
         callback,
     };
@@ -201,7 +226,7 @@ where
             return;
         }
 
-        let start = Len::new(text.len(), text.chars().count());
+        let start = self.text_len;
 
         if s.chars().next().is_some_and(|c| c.is_ascii_whitespace())
             && text.chars().last().is_some()
@@ -234,16 +259,17 @@ where
             text.pop();
         }
 
-        let end = Len::new(
+        self.text_len = Len::new(
             text.len(),
             start.chars + text[start.bytes..].chars().count(),
         );
 
-        self.styling.add(style, start..end);
+        self.styling.add(style, start..self.text_len);
     }
 
     fn accumulate_text(&mut self, node: Node, state: &State) {
         self.text_buf.clear();
+        self.text_len = Len::default();
         self.styling = Styling::builder();
         self.accumulate_text_(node, state.clone());
         trim_end_in_place(&mut self.text_buf);
@@ -265,12 +291,13 @@ where
 
     fn emit_text(&mut self, kind: TextualKind, state: &State) {
         if !self.text_buf.is_empty() {
-            let content = Content::Textual {
+            let content = TextContent {
                 text: &self.text_buf,
                 styling: self.styling.build(),
+                len: self.text_len,
                 kind,
             };
-            (self.callback)(content, state.align);
+            (self.callback)(Content::Textual(content), state.align);
         }
     }
 

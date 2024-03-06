@@ -5,7 +5,7 @@ mod len;
 pub use len::Len;
 
 mod style;
-pub use style::{Style, Styling, StylingIter};
+pub use style::Style;
 
 mod author;
 pub use author::Author;
@@ -25,9 +25,9 @@ mod tests {
     fn it_works() -> anyhow::Result<()> {
         let mut epub = Epub::from_path(&std::path::Path::new("./example_books/1.epub"))?;
         epub.traverse_chapter(5, |content, _| match content {
-            Content::Textual { text, kind, .. } => {
-                if matches!(kind, TextualKind::Paragraph) {
-                    println!("{}", text);
+            Content::Textual(text) => {
+                if matches!(text.kind(), TextualKind::Paragraph) {
+                    println!("{}", text.text());
                 }
             }
             _ => {}

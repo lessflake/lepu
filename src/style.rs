@@ -20,54 +20,54 @@ impl<T> Styling<T> {
     }
 }
 
-impl<T> Styling<T>
-where
-    T: std::ops::AddAssign + std::ops::SubAssign + Ord + Copy,
-{
-    pub fn add_from_disjoint_other(&mut self, mut other: Self, offset: T) {
-        other.offset(offset);
-        let Self { starts, ends } = other;
-        self.starts.extend(starts);
-        self.ends.extend(ends);
-    }
+// impl<T> Styling<T>
+// where
+//     T: std::ops::AddAssign + std::ops::SubAssign + Ord + Copy,
+// {
+//     pub fn add_from_disjoint_other(&mut self, mut other: Self, offset: T) {
+//         other.offset(offset);
+//         let Self { starts, ends } = other;
+//         self.starts.extend(starts);
+//         self.ends.extend(ends);
+//     }
 
-    fn offset(&mut self, offset: T) {
-        for thing in self
-            .starts
-            .iter_mut()
-            .flat_map(|s| [&mut s.range.start, &mut s.range.end])
-            .chain(
-                self.ends
-                    .iter_mut()
-                    .flat_map(|s| [&mut s.range.start, &mut s.range.end]),
-            )
-        {
-            *thing += offset;
-        }
-    }
+//     fn offset(&mut self, offset: T) {
+//         for thing in self
+//             .starts
+//             .iter_mut()
+//             .flat_map(|s| [&mut s.range.start, &mut s.range.end])
+//             .chain(
+//                 self.ends
+//                     .iter_mut()
+//                     .flat_map(|s| [&mut s.range.start, &mut s.range.end]),
+//             )
+//         {
+//             *thing += offset;
+//         }
+//     }
 
-    pub fn offset_after(&mut self, i: T, removed: T, added: T) {
-        for [start, end] in self
-            .starts
-            .iter_mut()
-            .map(|s| [&mut s.range.start, &mut s.range.end])
-            .chain(
-                self.ends
-                    .iter_mut()
-                    .map(|s| [&mut s.range.start, &mut s.range.end]),
-            )
-        {
-            if *start > i {
-                *start -= removed;
-                *start += added;
-            }
-            if *end > i {
-                *end -= removed;
-                *end += added;
-            }
-        }
-    }
-}
+//     pub fn offset_after(&mut self, i: T, removed: T, added: T) {
+//         for [start, end] in self
+//             .starts
+//             .iter_mut()
+//             .map(|s| [&mut s.range.start, &mut s.range.end])
+//             .chain(
+//                 self.ends
+//                     .iter_mut()
+//                     .map(|s| [&mut s.range.start, &mut s.range.end]),
+//             )
+//         {
+//             if *start > i {
+//                 *start -= removed;
+//                 *start += added;
+//             }
+//             if *end > i {
+//                 *end -= removed;
+//                 *end += added;
+//             }
+//         }
+//     }
+// }
 
 pub struct Builder<T> {
     styles: Vec<(Style, std::ops::Range<T>)>,
