@@ -3,12 +3,7 @@ use std::io::Read as _;
 use anyhow::Context as _;
 use url::Url;
 
-use crate::{
-    content,
-    parse::Parser,
-    util::{normalize_url, parse_hyperlink},
-    Align, Author, Content,
-};
+use crate::{content, parse::Parser, util::normalize_url, Align, Author, Content};
 
 pub struct Epub {
     container: Container,
@@ -253,7 +248,7 @@ impl Container {
 
     pub fn resolve_hyperlink(&self, item: usize, href: &str) -> anyhow::Result<usize> {
         let item = &self.manifest.0[item];
-        let url: Url = parse_hyperlink(&item.path, href)?;
+        let url = item.path.join(href)?;
         self.manifest.item_idx(&url).context("broken epub href")
     }
 

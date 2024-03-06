@@ -6,7 +6,6 @@ use crate::{
     epub::Container,
     len::Len,
     style::{self, Style, Styling},
-    util::trim_end_in_place,
 };
 
 pub enum Content<'a> {
@@ -301,6 +300,15 @@ where
             }
         }
     }
+}
+
+fn trim_end_in_place(s: &mut String) -> usize {
+    let mut count = 0;
+    while matches!(s.chars().last(), Some(c) if c.is_whitespace()) {
+        count += 1;
+        s.pop();
+    }
+    count
 }
 
 #[derive(Debug, Clone, Copy)]
