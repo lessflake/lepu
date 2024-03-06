@@ -11,7 +11,7 @@ mod author;
 pub use author::Author;
 
 mod content;
-pub use content::{Align, Content, TextualKind};
+pub use content::{Align, Content, TextContent, TextualKind};
 
 mod parse;
 
@@ -23,11 +23,11 @@ mod tests {
 
     #[test]
     fn it_works() -> anyhow::Result<()> {
-        let mut epub = Epub::from_path(&std::path::Path::new("./example_books/1.epub"))?;
-        epub.traverse_chapter(5, |content, _| match content {
+        let mut epub = Epub::from_path(&std::path::Path::new("./example_books/2.epub"))?;
+        epub.traverse_chapter(2, |content, _| match content {
             Content::Textual(text) => {
-                if matches!(text.kind(), TextualKind::Paragraph) {
-                    println!("{}", text.text());
+                for (chunk, _) in text.style_chunks() {
+                    println!("{}", chunk);
                 }
             }
             _ => {}

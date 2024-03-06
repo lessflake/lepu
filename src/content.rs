@@ -267,12 +267,20 @@ where
         self.styling.add(style, start..self.text_len);
     }
 
+    fn trim_end_in_place(&mut self) {
+        while matches!(self.text_buf.chars().last(), Some(c) if c.is_whitespace()) {
+            let c = self.text_buf.pop().unwrap();
+            self.text_len.bytes -= c.len_utf8();
+            self.text_len.chars -= 1;
+        }
+    }
+
     fn accumulate_text(&mut self, node: Node, state: &State) {
         self.text_buf.clear();
         self.text_len = Len::default();
         self.styling = Styling::builder();
         self.accumulate_text_(node, state.clone());
-        trim_end_in_place(&mut self.text_buf);
+        self.trim_end_in_place();
     }
 
     fn accumulate_text_(&mut self, node: Node, mut state: State) {
@@ -327,15 +335,6 @@ where
             }
         }
     }
-}
-
-fn trim_end_in_place(s: &mut String) -> usize {
-    let mut count = 0;
-    while matches!(s.chars().last(), Some(c) if c.is_whitespace()) {
-        count += 1;
-        s.pop();
-    }
-    count
 }
 
 #[derive(Debug, Clone, Copy)]
