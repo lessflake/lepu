@@ -11,7 +11,7 @@ mod author;
 pub use author::Author;
 
 mod content;
-pub use content::{Align, Content, TextContent, TextualKind};
+pub use content::{Align, Content, Text, TextKind};
 
 mod parse;
 

@@ -1,10 +1,8 @@
 use url::Url;
 
 pub fn normalize_url(url: &Url) -> String {
-    let p = url.path();
-    let p = percent_encoding::percent_decode_str(p)
+    percent_encoding::percent_decode_str(url.path())
         .decode_utf8()
-        .unwrap();
-    let p = p.to_lowercase();
-    p
+        .unwrap() // already parsed by `Url`
+        .to_lowercase()
 }

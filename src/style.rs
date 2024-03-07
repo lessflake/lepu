@@ -100,27 +100,31 @@ where
                 Range::new(*style, range.clone()),
             )
         }
-        let (mut starts, mut ends): (Vec<_>, Vec<_>) = self.styles.iter().map(pair).unzip();
         fn cmp<T: Ord>(a: &impl StyleRange<T>, b: &impl StyleRange<T>) -> std::cmp::Ordering {
             a.idx().cmp(&b.idx()).then(a.style().cmp(&b.style()))
         }
+
+        let (mut starts, mut ends): (Vec<_>, Vec<_>) = self.styles.iter().map(pair).unzip();
         starts.sort_unstable_by(cmp);
         ends.sort_unstable_by(cmp);
         Styling { starts, ends }
     }
 }
 
-impl<T: Ord + Copy> Styling<T> {
+impl<T> Styling<T>
+where
+    T: Ord + Copy + std::ops::Sub<T, Output = T>,
+{
     pub fn iter(&self, start: T, end: T) -> StylingIter<'_, T> {
         assert!(end >= start);
-        let end_idx = self.ends.partition_point(|s| s.range.end <= start);
+        let end_idx = self.ends.partition_point(|s| s.inner.end <= start);
         let start_idx = self
             .ends
             .get(end_idx)
-            .map(|e| (e.range.start, e.style))
+            .map(|e| (e.inner.start, e.style))
             .and_then(|e| {
                 self.starts
-                    .binary_search_by_key(&e, |s| (s.range.start, s.style))
+                    .binary_search_by_key(&e, |s| (s.inner.start, s.style))
                     .ok()
             })
             .unwrap_or(end_idx);
@@ -155,10 +159,10 @@ where
         fn apply_prior_styles<T: Ord>(
             mut style: Style,
             it: &mut std::iter::Peekable<std::slice::Iter<'_, impl StyleRange<T>>>,
-            idx: T,
+            idx: &T,
         ) -> Style {
             while let Some(peek) = it.peek() {
-                if peek.idx() <= idx {
+                if &peek.idx() <= idx {
                     style = peek.apply(style);
                 } else {
                     break;
@@ -172,13 +176,13 @@ where
             return None;
         }
 
-        self.style = apply_prior_styles(self.style, &mut self.ends, self.idx);
-        self.style = apply_prior_styles(self.style, &mut self.starts, self.idx);
+        self.style = apply_prior_styles(self.style, &mut self.ends, &self.idx);
+        self.style = apply_prior_styles(self.style, &mut self.starts, &self.idx);
 
         let mut next_pos = match (self.starts.peek(), self.ends.peek()) {
-            (Some(s), Some(e)) => s.range.start.min(e.range.end),
-            (None, Some(e)) => e.range.end,
-            (Some(s), None) => s.range.start,
+            (Some(s), Some(e)) => s.inner.start.min(e.inner.end),
+            (None, Some(e)) => e.inner.end,
+            (Some(s), None) => s.inner.start,
             _ => {
                 self.ended = true;
                 self.end
@@ -204,7 +208,7 @@ where
 #[derive(Debug, Clone, PartialEq, Eq)]
 struct Range<Marker, T> {
     style: Style,
-    range: std::ops::Range<T>,
+    inner: std::ops::Range<T>,
     phantom: PhantomData<Marker>,
 }
 
@@ -212,7 +216,7 @@ impl<Marker, T> Range<Marker, T> {
     fn new(style: Style, range: std::ops::Range<T>) -> Self {
         Self {
             style,
-            range,
+            inner: range,
             phantom: PhantomData,
         }
     }
@@ -232,7 +236,7 @@ trait StyleRange<T> {
 
 impl<T: Copy> StyleRange<T> for Range<Start, T> {
     fn idx(&self) -> T {
-        self.range.start
+        self.inner.start
     }
 
     fn style(&self) -> Style {
@@ -246,7 +250,7 @@ impl<T: Copy> StyleRange<T> for Range<Start, T> {
 
 impl<T: Copy> StyleRange<T> for Range<End, T> {
     fn idx(&self) -> T {
-        self.range.end
+        self.inner.end
     }
 
     fn style(&self) -> Style {

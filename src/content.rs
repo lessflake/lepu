@@ -9,23 +9,23 @@ use crate::{
 };
 
 pub enum Content<'a> {
-    Textual(TextContent<'a>),
+    Textual(Text<'a>),
     Image,
 }
 
-pub struct TextContent<'a> {
-    kind: TextualKind,
+pub struct Text<'a> {
+    kind: TextKind,
     text: &'a str,
     len: Len,
     styling: Styling<Len>,
 }
 
-impl<'a> TextContent<'a> {
+impl<'a> Text<'a> {
     pub fn text(&self) -> &str {
         self.text
     }
 
-    pub fn kind(&self) -> TextualKind {
+    pub fn kind(&self) -> TextKind {
         self.kind
     }
 
@@ -40,7 +40,7 @@ impl<'a> TextContent<'a> {
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum TextualKind {
+pub enum TextKind {
     Header,
     Paragraph,
     Quote,
@@ -51,6 +51,7 @@ pub enum Align {
     Left,
     Center,
     Right,
+    Justify,
 }
 
 #[derive(Default, Clone)]
@@ -137,7 +138,7 @@ pub fn traverse(
 
     // Parse those stylesheets into a single `simplecss::StyleSheet`
     let mut stylesheet = StyleSheet::new();
-    for style in raw_stylesheets.iter() {
+    for style in &raw_stylesheets {
         stylesheet.parse_more(style);
     }
 
@@ -148,24 +149,24 @@ pub fn traverse(
         for dec in &rule.declarations {
             match dec.name {
                 "font-style" if dec.value == "italic" || dec.value.contains("oblique") => {
-                    rules.push((i, CssAttribute::Style(Style::ITALIC)))
+                    rules.push((i, CssAttribute::Style(Style::ITALIC)));
                 }
                 "font-weight"
                     if matches!(dec.value, "bold" | "bolder")
                         || dec.value.parse::<usize>().is_ok_and(|x| x > 400) =>
                 {
-                    rules.push((i, CssAttribute::Style(Style::BOLD)))
+                    rules.push((i, CssAttribute::Style(Style::BOLD)));
                 }
                 "text-align" => {
                     let align = match dec.value {
                         "left" => Align::Left,
                         "center" => Align::Center,
                         "right" => Align::Right,
-                        "justify" => Align::Left,
+                        "justify" => Align::Justify,
                         "inherit" => continue,
                         a => panic!("invalid text-align? ({a})"),
                     };
-                    rules.push((i, CssAttribute::Align(align)))
+                    rules.push((i, CssAttribute::Align(align)));
                 }
                 _ => {}
             }
@@ -297,9 +298,9 @@ where
         }
     }
 
-    fn emit_text(&mut self, kind: TextualKind, state: &State) {
+    fn emit_text(&mut self, kind: TextKind, state: &State) {
         if !self.text_buf.is_empty() {
-            let content = TextContent {
+            let content = Text {
                 text: &self.text_buf,
                 styling: self.styling.build(),
                 len: self.text_len,
@@ -315,15 +316,15 @@ where
         match node.tag_name().name() {
             "h1" | "h2" | "h3" | "h4" | "h5" | "h6" => {
                 self.accumulate_text(node, &state);
-                self.emit_text(TextualKind::Header, &state);
+                self.emit_text(TextKind::Header, &state);
             }
             "p" => {
                 self.accumulate_text(node, &state);
-                self.emit_text(TextualKind::Paragraph, &state);
+                self.emit_text(TextKind::Paragraph, &state);
             }
             "blockquote" => {
                 self.accumulate_text(node, &state);
-                self.emit_text(TextualKind::Quote, &state);
+                self.emit_text(TextKind::Quote, &state);
             }
             n if n == "image" || (n == "img" && node.has_attribute("src")) => {
                 (self.callback)(Content::Image, state.align);
@@ -351,7 +352,7 @@ impl simplecss::Element for XmlNode<'_, '_> {
     }
 
     fn prev_sibling_element(&self) -> Option<Self> {
-        self.0.prev_siblings().find(|n| n.is_element()).map(XmlNode)
+        self.0.prev_siblings().find(Node::is_element).map(XmlNode)
     }
 
     fn has_local_name(&self, local_name: &str) -> bool {

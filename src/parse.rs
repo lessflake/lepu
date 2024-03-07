@@ -29,11 +29,10 @@ impl<'a> Parser<'a> {
         let root = {
             let path = Path::new(&rootfile_path);
             anyhow::ensure!(path.is_relative(), "rootfile path not relative");
-            let p = path.parent().unwrap();
+            let p = path.parent().context("rootfile no parent")?;
             let mut path_str = p.to_string_lossy().into_owned();
             path_str.push('/');
-            let url = Url::parse("epub:/")?.join(&path_str)?;
-            url
+            Url::parse("epub:/")?.join(&path_str)?
         };
 
         let rootfile = {
@@ -78,6 +77,9 @@ impl<'a> Parser<'a> {
                         .or_else(|| child.text())
                     {
                         for name in if raw.contains('&') {
+                            // passing `&str` instead of `char` so both arms
+                            // have same return type
+                            #[allow(clippy::single_char_pattern)]
                             raw.split("&")
                         } else {
                             raw.split(" and ")
@@ -146,8 +148,7 @@ impl<'a> Parser<'a> {
             .root_element()
             .children()
             .filter(Node::is_element)
-            .skip(2)
-            .next()
+            .nth(2)
             .context("missing spine")?;
         let ncx = node
             .attribute("toc")
@@ -163,14 +164,10 @@ impl<'a> Parser<'a> {
     }
 }
 
-pub fn parse_toc(
-    container: &mut Container,
-    spine: &Spine,
-    version: Version,
-) -> anyhow::Result<Toc> {
+pub fn toc(container: &mut Container, spine: &Spine, version: Version) -> anyhow::Result<Toc> {
     Ok(match version {
-        Version::V2(ncx_idx) => toc_v2(container, &spine, ncx_idx)?,
-        Version::V3(toc_idx) => toc_v3(container, &spine, toc_idx)?,
+        Version::V2(ncx_idx) => toc_v2(container, spine, ncx_idx)?,
+        Version::V3(toc_idx) => toc_v3(container, spine, toc_idx)?,
     })
 }
 
@@ -194,21 +191,6 @@ fn toc_v3(container: &mut Container, spine: &Spine, toc_idx: usize) -> anyhow::R
         }
         None
     }
-
-    let data = container.retrieve(toc_idx)?;
-    let xml = Document::parse(&data)?;
-    let mut elements = xml.root_element().children().filter(Node::is_element);
-    let _head = elements.next().context("toc missing head")?;
-    let body = elements.next().context("toc missing body")?;
-    let toc_nav = find_nav(body).context("toc missing nav")?;
-
-    let mut entries = Vec::new();
-    let list = toc_nav
-        .children()
-        .filter(Node::is_element)
-        .nth(1)
-        .context("toc missing navlist")?;
-    let toc_uri = container.item_uri(toc_idx);
 
     fn visit_entries(
         container: &Container,
@@ -275,22 +257,27 @@ fn toc_v3(container: &mut Container, spine: &Spine, toc_idx: usize) -> anyhow::R
         Ok(children_count)
     }
 
-    visit_entries(container, spine, &toc_uri, &mut entries, list, 0, &mut 0)?;
+    let data = container.retrieve(toc_idx)?;
+    let xml = Document::parse(&data)?;
+    let mut elements = xml.root_element().children().filter(Node::is_element);
+    let _head = elements.next().context("toc missing head")?;
+    let body = elements.next().context("toc missing body")?;
+    let toc_nav = find_nav(body).context("toc missing nav")?;
+
+    let mut entries = Vec::new();
+    let list = toc_nav
+        .children()
+        .filter(Node::is_element)
+        .nth(1)
+        .context("toc missing navlist")?;
+    let toc_uri = container.item_uri(toc_idx);
+
+    visit_entries(container, spine, toc_uri, &mut entries, list, 0, &mut 0)?;
 
     Ok(Toc::new(entries))
 }
 
 fn toc_v2(container: &mut Container, spine: &Spine, ncx_idx: usize) -> anyhow::Result<Toc> {
-    let data = container.retrieve(ncx_idx)?;
-    let xml = Document::parse(&data).unwrap();
-
-    let nav_map = xml
-        .root_element()
-        .children()
-        .filter(Node::is_element)
-        .find(|n| n.tag_name().name() == "navMap")
-        .context("toc missing nav map")?;
-
     fn visit_navpoint(
         container: &Container,
         spine: &Spine,
@@ -321,11 +308,11 @@ fn toc_v2(container: &mut Container, spine: &Spine, ncx_idx: usize) -> anyhow::R
             .context("nav point is missing src attribute")?;
 
         let (path, fragment) = match content.rsplit_once('#') {
-            Some((path, frag)) => (path, Some(frag).map(ToOwned::to_owned)),
+            Some((path, frag)) => (path, Some(frag.to_owned())),
             None => (content, None),
         };
 
-        let path = container.root().join(&path).unwrap();
+        let path = container.root().join(path)?;
         let norm = normalize_url(&path);
 
         let spine_index = container
@@ -363,6 +350,16 @@ fn toc_v2(container: &mut Container, spine: &Spine, ncx_idx: usize) -> anyhow::R
 
         Ok(children_count)
     }
+
+    let data = container.retrieve(ncx_idx)?;
+    let xml = Document::parse(&data).unwrap();
+
+    let nav_map = xml
+        .root_element()
+        .children()
+        .filter(Node::is_element)
+        .find(|n| n.tag_name().name() == "navMap")
+        .context("toc missing nav map")?;
 
     let mut entries = Vec::new();
     let mut play_order = Vec::new();

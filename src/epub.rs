@@ -3,7 +3,12 @@ use std::io::Read as _;
 use anyhow::Context as _;
 use url::Url;
 
-use crate::{content, parse::Parser, util::normalize_url, Align, Author, Content};
+use crate::{
+    content,
+    parse::{self, Parser},
+    util::normalize_url,
+    Align, Author, Content,
+};
 
 pub struct Epub {
     container: Container,
@@ -38,7 +43,7 @@ impl Epub {
             v => anyhow::bail!("unsupported epub version ({v})"),
         };
         let mut container = Container::new(archive, manifest, root);
-        let toc = crate::parse::parse_toc(&mut container, &spine, version)?;
+        let toc = parse::toc(&mut container, &spine, version)?;
 
         Ok(Self {
             container,
@@ -83,10 +88,12 @@ impl Epub {
         &self.metadata.language
     }
 
-    pub fn chapters(
-        &self,
-    ) -> impl Iterator<Item = &Chapter> + DoubleEndedIterator + ExactSizeIterator {
+    pub fn chapters(&self) -> impl Iterator<Item = &Chapter> {
         self.toc.0.iter()
+    }
+
+    pub fn chapter_by_toc_index(&self, idx: usize) -> Option<&Chapter> {
+        self.toc.entry(idx)
     }
 
     pub fn chapter_count(&self) -> usize {
@@ -129,7 +136,7 @@ impl Toc {
             goal: usize,
             cur: &mut usize,
         ) -> Option<&'a Chapter> {
-            for node in entries.iter() {
+            for node in entries {
                 if *cur == goal {
                     return Some(node);
                 }
@@ -253,9 +260,7 @@ impl Manifest {
 
     pub fn item_idx(&self, path: &Url) -> Option<usize> {
         let norm = normalize_url(path);
-        self.0
-            .iter()
-            .position(|item| &item.normalized_path == &norm)
+        self.0.iter().position(|item| item.normalized_path == norm)
     }
 
     pub fn item_idx_by_name(&self, name: &str) -> Option<usize> {
@@ -282,16 +287,12 @@ impl Container {
         &self.root
     }
 
-    pub fn name_in_archive<'a>(&self, url: &'a Url) -> &'a str {
-        // need to strip out leading `/`
-        &url.path()[1..]
-    }
-
     pub fn retrieve(&mut self, item: usize) -> anyhow::Result<String> {
         let item = &self.manifest.0[item];
-        let abs_path = self.name_in_archive(&item.path);
+        // need to strip out leading `/`
+        let abs_path = &item.path.path()[1..];
         let mut data = String::new();
-        self.archive.read_into(&abs_path, &mut data)?;
+        self.archive.read_into(abs_path, &mut data)?;
         Ok(data)
     }
 
