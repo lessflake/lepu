@@ -291,6 +291,7 @@ where
             self.add_text_to_buf(node, state.style);
         } else if node.tag_name().name().trim() == "br" {
             self.text_buf.push('\n');
+            self.text_len += Len::new(1, 1);
         }
 
         for child in node.children() {
