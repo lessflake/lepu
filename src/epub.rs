@@ -52,7 +52,7 @@ impl Epub {
         &mut self,
         entry: usize,
         callback: impl FnMut(Content<'_>, Option<Align>),
-    ) -> anyhow::Result<&str> {
+    ) -> anyhow::Result<()> {
         self.traverse_chapter_with_replacements(entry, &[], callback)
     }
 
@@ -61,14 +61,10 @@ impl Epub {
         entry: usize,
         replacements: &'static [(char, &'static str)],
         callback: impl FnMut(Content<'_>, Option<Align>),
-    ) -> anyhow::Result<&str> {
-        let toc_entry = self.toc.entry(entry).context("not in toc")?;
-        let manifest_idx = self
-            .spine
-            .get(toc_entry.spine_index)
-            .context("not in spine")?;
+    ) -> anyhow::Result<()> {
+        let manifest_idx = self.spine.get(entry).context("not in spine")?;
         content::traverse(&mut self.container, manifest_idx, replacements, callback)?;
-        Ok(toc_entry.name.as_ref())
+        Ok(())
     }
 
     pub fn title(&self) -> &str {
@@ -95,6 +91,10 @@ impl Epub {
 
     pub fn chapter_count(&self) -> usize {
         self.toc.0.len()
+    }
+
+    pub fn document_count(&self) -> usize {
+        self.spine.0.len()
     }
 }
 
@@ -188,12 +188,20 @@ impl Chapter {
         self.depth
     }
 
+    pub fn has_children(&self) -> bool {
+        !self.children.is_empty()
+    }
+
     pub fn children(&self) -> impl Iterator<Item = &Self> {
         self.children.iter()
     }
 
     pub fn index_in_toc(&self) -> usize {
         self.toc_index
+    }
+
+    pub fn index_in_spine(&self) -> usize {
+        self.spine_index
     }
 }
 
