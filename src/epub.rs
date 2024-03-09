@@ -1,12 +1,12 @@
-use std::io::Read as _;
+use std::borrow::Cow;
 
 use anyhow::Context as _;
-use url::Url;
 
 use crate::{
     content,
     parse::{self, Parser},
-    util::normalize_url,
+    uri::Uri,
+    zip::Zip,
     Align, Author, Content,
 };
 
@@ -18,21 +18,12 @@ pub struct Epub {
 }
 
 impl Epub {
-    pub fn from_path(path: impl AsRef<std::path::Path>) -> anyhow::Result<Self> {
-        let fd = std::fs::File::open(path)?;
-        Self::from_reader(std::io::BufReader::new(fd))
-    }
-
-    pub fn from_vec(vec: Vec<u8>) -> anyhow::Result<Self> {
-        Self::from_reader(std::io::Cursor::new(vec))
-    }
-
-    pub fn from_reader(
-        reader: impl std::io::Read + std::io::Seek + 'static,
-    ) -> anyhow::Result<Self> {
-        let mut archive = Archive::new(reader)?;
-        let mut buf = String::new();
-        let parser = Parser::from_archive(&mut archive, &mut buf)?;
+    pub fn new(e: Vec<u8>) -> anyhow::Result<Self> {
+        let zip = Zip::new(e).unwrap();
+        let (path, uri) = parse::root(&zip)?;
+        let data = zip.read(&path).unwrap();
+        let s = std::str::from_utf8(&data).unwrap();
+        let parser = Parser::new(s, uri)?;
         let (manifest, toc_idx) = parser.manifest()?;
         let root = parser.root_directory().clone();
         let metadata = parser.metadata()?;
@@ -42,7 +33,7 @@ impl Epub {
             3 => Version::V3(toc_idx.context("missing toc idx")?),
             v => anyhow::bail!("unsupported epub version ({v})"),
         };
-        let mut container = Container::new(archive, manifest, root);
+        let mut container = Container::new(zip, manifest, root);
         let toc = parse::toc(&mut container, &spine, version)?;
 
         Ok(Self {
@@ -229,14 +220,14 @@ pub enum Version {
 #[derive(Debug, Clone)]
 pub struct Item {
     name: String,
-    path: Url,
+    path: Uri,
     normalized_path: String,
     _mime: String,
 }
 
 impl Item {
-    pub fn new(name: String, path: Url, mime: String) -> Self {
-        let normalized_path = normalize_url(&path);
+    pub fn new(name: String, path: Uri, mime: String) -> Self {
+        let normalized_path = path.normalize_url();
         Self {
             name,
             path,
@@ -258,8 +249,8 @@ impl Manifest {
         Self(items)
     }
 
-    pub fn item_idx(&self, path: &Url) -> Option<usize> {
-        let norm = normalize_url(path);
+    pub fn item_idx(&self, path: &Uri) -> Option<usize> {
+        let norm = path.normalize_url();
         self.0.iter().position(|item| item.normalized_path == norm)
     }
 
@@ -269,62 +260,41 @@ impl Manifest {
 }
 
 pub struct Container {
-    archive: Archive,
+    zip: Zip,
     manifest: Manifest,
-    root: Url,
+    root: Uri,
 }
 
 impl Container {
-    pub fn new(archive: Archive, manifest: Manifest, root: Url) -> Self {
+    pub fn new(zip: Zip, manifest: Manifest, root: Uri) -> Self {
         Self {
-            archive,
+            zip,
             manifest,
             root,
         }
     }
 
-    pub fn root(&self) -> &Url {
+    pub fn root(&self) -> &Uri {
         &self.root
     }
 
-    pub fn retrieve(&mut self, item: usize) -> anyhow::Result<String> {
+    pub fn retrieve(&self, item: usize) -> anyhow::Result<Cow<[u8]>> {
         let item = &self.manifest.0[item];
-        // need to strip out leading `/`
-        let abs_path = &item.path.path()[1..];
-        let mut data = String::new();
-        self.archive.read_into(abs_path, &mut data)?;
+        let data = self.zip.read(item.path.path()).unwrap();
         Ok(data)
     }
 
-    pub fn item_uri(&self, idx: usize) -> &Url {
+    pub fn item_uri(&self, idx: usize) -> &Uri {
         &self.manifest.0[idx].path
     }
 
     pub fn resolve_hyperlink(&self, item: usize, href: &str) -> anyhow::Result<usize> {
         let item = &self.manifest.0[item];
-        let url = item.path.join(href)?;
+        let url = item.path.join_from_parent(href)?;
         self.manifest.item_idx(&url).context("broken epub href")
     }
 
     pub fn items(&self) -> impl Iterator<Item = &Item> {
         self.manifest.0.iter()
-    }
-}
-
-pub trait ZipRead: std::io::Read + std::io::Seek {}
-impl<T> ZipRead for T where T: std::io::Read + std::io::Seek {}
-
-pub struct Archive(zip::ZipArchive<Box<dyn ZipRead>>);
-
-impl Archive {
-    pub fn new(reader: impl std::io::Read + std::io::Seek + 'static) -> anyhow::Result<Self> {
-        let reader: Box<dyn ZipRead> = Box::new(reader);
-        Ok(Self(zip::ZipArchive::new(reader)?))
-    }
-
-    pub fn read_into(&mut self, file: &str, buf: &mut String) -> anyhow::Result<()> {
-        buf.clear();
-        self.0.by_name(file)?.read_to_string(buf)?;
-        Ok(())
     }
 }

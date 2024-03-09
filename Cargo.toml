@@ -11,5 +11,12 @@ bitflags = "2.4.2"
 percent-encoding = "2.3.1"
 roxmltree = "0.18.0"
 simplecss = "0.2.1"
-url = "2.4.0"
-zip = { version = "0.6.6", default-features = false, features = ["deflate"] }
+
+# [target.'cfg(not(target_arch="wasm32"))'.dependencies.zune-inflate]
+[dependencies.zune-inflate]
+version = "0.2.54"
+default-features = false
+features = ["simd-adler32", "std"]
+
+# [target.'cfg(target_arch="wasm32")'.dependencies.wasm-bindgen]
+# version = "0.2.92"

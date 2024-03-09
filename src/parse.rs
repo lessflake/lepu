@@ -1,44 +1,37 @@
-use std::path::Path;
-
 use anyhow::Context;
 use roxmltree::{Document, Node};
-use url::Url;
 
 use crate::{
-    epub::{Archive, Chapter, Container, Item, Manifest, Metadata, Spine, Toc, Version},
-    util::normalize_url,
+    epub::{Chapter, Container, Item, Manifest, Metadata, Spine, Toc, Version},
+    uri::Uri,
+    zip::Zip,
 };
 
 pub struct Parser<'a> {
     inner: Document<'a>,
-    root: Url,
+    root: Uri,
+}
+
+pub fn root(zip: &Zip) -> anyhow::Result<(String, Uri)> {
+    let data = zip.read("META-INF/container.xml").unwrap();
+    let s = std::str::from_utf8(&data).unwrap();
+    let container = Document::parse(s)?;
+
+    let rootfile_path = container
+        .descendants()
+        .find(|n| n.has_tag_name("rootfile"))
+        .context("missing rootfile")
+        .and_then(|rf| rf.attribute("full-path").context("rootfile missing path"))?
+        .to_owned();
+
+    let root = Uri::directory_of(&rootfile_path)?;
+
+    Ok((rootfile_path, root))
 }
 
 impl<'a> Parser<'a> {
-    pub fn from_archive(archive: &mut Archive, buf: &'a mut String) -> anyhow::Result<Self> {
-        archive.read_into("META-INF/container.xml", buf)?;
-        let container = Document::parse(buf)?;
-
-        let rootfile_path = container
-            .descendants()
-            .find(|n| n.has_tag_name("rootfile"))
-            .context("missing rootfile")
-            .and_then(|rf| rf.attribute("full-path").context("rootfile missing path"))?
-            .to_owned();
-
-        let root = {
-            let path = Path::new(&rootfile_path);
-            anyhow::ensure!(path.is_relative(), "rootfile path not relative");
-            let p = path.parent().context("rootfile no parent")?;
-            let mut path_str = p.to_string_lossy().into_owned();
-            path_str.push('/');
-            Url::parse("epub:/")?.join(&path_str)?
-        };
-
-        let rootfile = {
-            archive.read_into(&rootfile_path, buf)?;
-            Document::parse(buf)?
-        };
+    pub fn new(s: &'a str, root: Uri) -> anyhow::Result<Self> {
+        let rootfile = Document::parse(s)?;
 
         Ok(Self {
             inner: rootfile,
@@ -138,7 +131,7 @@ impl<'a> Parser<'a> {
         Ok((Manifest::new(items), toc_idx))
     }
 
-    pub fn root_directory(&self) -> &Url {
+    pub fn root_directory(&self) -> &Uri {
         &self.root
     }
 
@@ -195,7 +188,7 @@ fn toc_v3(container: &mut Container, spine: &Spine, toc_idx: usize) -> anyhow::R
     fn visit_entries(
         container: &Container,
         spine: &Spine,
-        toc_uri: &Url,
+        toc_uri: &Uri,
         entries: &mut Vec<Chapter>,
         list: Node,
         depth: usize,
@@ -258,7 +251,8 @@ fn toc_v3(container: &mut Container, spine: &Spine, toc_idx: usize) -> anyhow::R
     }
 
     let data = container.retrieve(toc_idx)?;
-    let xml = Document::parse(&data)?;
+    let s = std::str::from_utf8(&data).unwrap();
+    let xml = Document::parse(s)?;
     let mut elements = xml.root_element().children().filter(Node::is_element);
     let _head = elements.next().context("toc missing head")?;
     let body = elements.next().context("toc missing body")?;
@@ -313,7 +307,7 @@ fn toc_v2(container: &mut Container, spine: &Spine, ncx_idx: usize) -> anyhow::R
         };
 
         let path = container.root().join(path)?;
-        let norm = normalize_url(&path);
+        let norm = path.normalize_url();
 
         let spine_index = container
             .items()
@@ -352,7 +346,8 @@ fn toc_v2(container: &mut Container, spine: &Spine, ncx_idx: usize) -> anyhow::R
     }
 
     let data = container.retrieve(ncx_idx)?;
-    let xml = Document::parse(&data).unwrap();
+    let s = std::str::from_utf8(&data).unwrap();
+    let xml = Document::parse(s).unwrap();
 
     let nav_map = xml
         .root_element()

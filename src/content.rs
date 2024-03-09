@@ -79,7 +79,8 @@ pub fn traverse(
     callback: impl FnMut(Content<'_>, Option<Align>),
 ) -> anyhow::Result<()> {
     // Retrieve chapter data
-    let mut data = container.retrieve(index)?;
+    let data = container.retrieve(index)?;
+    let mut s = String::from_utf8(data.into_owned()).unwrap();
 
     // println!("{}", data);
 
@@ -99,15 +100,15 @@ pub fn traverse(
     //   (Existing issue: https://github.com/RazrFalcon/roxmltree/issues/105)
     // * Swap XML/XHTML parsing library, however `roxmltree` has favourable
     //   characteristics for EPUB content
-    let xml = match Document::parse(&data) {
+    let xml = match Document::parse(&s) {
         Err(roxmltree::Error::UnknownEntityReference(name, _)) => {
             let (needle, replacement) = match name.as_ref() {
                 "nbsp" => ("&nbsp;", " "),
                 _ => anyhow::bail!("entity needs adding ({name})"),
             };
 
-            data = data.replace(needle, replacement);
-            Document::parse(&data)
+            s = s.replace(needle, replacement);
+            Document::parse(&s)
         }
         x => x,
     }?;
@@ -126,8 +127,9 @@ pub fn traverse(
                     continue;
                 }
                 let css_item = container.resolve_hyperlink(index, href)?;
-                let css = container.retrieve(css_item)?;
-                raw_stylesheets.push(css);
+                let data = container.retrieve(css_item)?;
+                let s = String::from_utf8(data.into_owned()).unwrap();
+                raw_stylesheets.push(s);
             }
             "style" if matches!(node.attribute("type"), Some("text/css") | None) => {
                 raw_stylesheets.push(node.text().context("style tag without text")?.to_owned());

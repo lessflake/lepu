@@ -14,8 +14,9 @@ mod content;
 pub use content::{Align, Content, Text, TextKind};
 
 mod parse;
-
+mod uri;
 mod util;
+mod zip;
 
 #[cfg(test)]
 mod tests {
@@ -23,7 +24,8 @@ mod tests {
 
     #[test]
     fn it_works() -> anyhow::Result<()> {
-        let mut epub = Epub::from_path(&std::path::Path::new("./example_books/1.epub"))?;
+        let data = std::fs::read("./example_books/1.epub")?;
+        let mut epub = Epub::new(data)?;
         for chapter in epub.chapters() {
             println!("{:#?}", chapter);
         }
