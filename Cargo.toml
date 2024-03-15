@@ -6,10 +6,10 @@ edition = "2021"
 # See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
 
 [dependencies]
-anyhow = "1.0.80"
+anyhow = "1.0.81"
 bitflags = "2.4.2"
 percent-encoding = "2.3.1"
-roxmltree = "0.18.0"
+roxmltree = "0.19.0"
 simplecss = "0.2.1"
 
 # [target.'cfg(not(target_arch="wasm32"))'.dependencies.zune-inflate]

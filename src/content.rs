@@ -373,9 +373,6 @@ where
                 }
             }
             n if n == "image" || (n == "img" && node.has_attribute("src")) => {
-                for attr in node.attributes() {
-                    println!("{:?}", attr);
-                }
                 let attr = match n {
                     "img" => node.attribute("src"),
                     "image" => node.attribute(("http://www.w3.org/1999/xlink", "href")),
