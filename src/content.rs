@@ -338,15 +338,13 @@ where
     }
 
     fn emit_text(&mut self, kind: TextKind, state: &State) {
-        if !self.text_buf.is_empty() {
-            let content = Text {
-                text: &self.text_buf,
-                styling: self.styling.build(),
-                len: self.text_len,
-                kind,
-            };
-            (self.callback)(self.ctx.clone(), Content::Textual(content), state.align);
-        }
+        let content = Text {
+            text: &self.text_buf,
+            styling: self.styling.build(),
+            len: self.text_len,
+            kind,
+        };
+        (self.callback)(self.ctx.clone(), Content::Textual(content), state.align);
     }
 
     fn run(&mut self, node: Node, mut state: State) {
@@ -355,29 +353,46 @@ where
         match node.tag_name().name() {
             "h1" | "h2" | "h3" | "h4" | "h5" | "h6" => {
                 self.accumulate_text(node, &state);
-                self.emit_text(TextKind::Header, &state);
+                if !self.text_buf.is_empty() {
+                    self.emit_text(TextKind::Header, &state);
+                    return;
+                }
             }
             "p" => {
                 self.accumulate_text(node, &state);
-                self.emit_text(TextKind::Paragraph, &state);
+                if !self.text_buf.is_empty() {
+                    self.emit_text(TextKind::Paragraph, &state);
+                    return;
+                }
             }
             "blockquote" => {
                 self.accumulate_text(node, &state);
-                self.emit_text(TextKind::Quote, &state);
+                if !self.text_buf.is_empty() {
+                    self.emit_text(TextKind::Quote, &state);
+                    return;
+                }
             }
             n if n == "image" || (n == "img" && node.has_attribute("src")) => {
-                let href = node.attribute("src").unwrap();
-                if let Ok(item) = self.ctx.resolve_hyperlink(href) {
-                    // println!("{:?}", item);
-                    // let data = container.retrieve(item);
-                    (self.callback)(self.ctx.clone(), Content::Image(item), state.align);
+                for attr in node.attributes() {
+                    println!("{:?}", attr);
                 }
-            }
-            _ => {
-                for child in node.children() {
-                    self.run(child, state.clone());
+                let attr = match n {
+                    "img" => node.attribute("src"),
+                    "image" => node.attribute(("http://www.w3.org/1999/xlink", "href")),
+                    _ => None,
+                };
+                if let Some(href) = attr {
+                    if let Ok(item) = self.ctx.resolve_hyperlink(href) {
+                        (self.callback)(self.ctx.clone(), Content::Image(item), state.align);
+                    }
                 }
+                return;
             }
+            _ => {}
+        }
+
+        for child in node.children() {
+            self.run(child, state.clone());
         }
     }
 }
