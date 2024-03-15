@@ -1,7 +1,7 @@
 use std::borrow::Cow;
 
 use anyhow::Context as _;
-use roxmltree::{Document, Node};
+use roxmltree::{Document, Node, ParsingOptions};
 use simplecss::StyleSheet;
 
 use crate::{
@@ -103,7 +103,13 @@ pub fn traverse<'a>(
     //   (Existing issue: https://github.com/RazrFalcon/roxmltree/issues/105)
     // * Swap XML/XHTML parsing library, however `roxmltree` has favourable
     //   characteristics for EPUB content
-    let xml = match Document::parse(&s) {
+    let xml = match Document::parse_with_options(
+        &s,
+        ParsingOptions {
+            allow_dtd: true,
+            ..Default::default()
+        },
+    ) {
         Err(roxmltree::Error::UnknownEntityReference(name, _)) => {
             let (needle, replacement) = match name.as_ref() {
                 "nbsp" => ("&nbsp;", " "),
