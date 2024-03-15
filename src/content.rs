@@ -76,7 +76,7 @@ struct Parser<'styles, 'a, F> {
 }
 
 pub fn traverse<'a>(
-    container: &'a mut Container,
+    container: &'a Container,
     index: usize,
     replacements: &'static [(char, &'static str)],
     callback: impl FnMut(Context<'a>, Content<'_>, Option<Align>),

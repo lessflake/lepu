@@ -157,14 +157,14 @@ impl<'a> Parser<'a> {
     }
 }
 
-pub fn toc(container: &mut Container, spine: &Spine, version: Version) -> anyhow::Result<Toc> {
+pub fn toc(container: &Container, spine: &Spine, version: Version) -> anyhow::Result<Toc> {
     Ok(match version {
         Version::V2(ncx_idx) => toc_v2(container, spine, ncx_idx)?,
         Version::V3(toc_idx) => toc_v3(container, spine, toc_idx)?,
     })
 }
 
-fn toc_v3(container: &mut Container, spine: &Spine, toc_idx: usize) -> anyhow::Result<Toc> {
+fn toc_v3(container: &Container, spine: &Spine, toc_idx: usize) -> anyhow::Result<Toc> {
     fn is_nav(n: &Node) -> bool {
         n.tag_name().name() == "nav"
             && matches!(
@@ -271,7 +271,7 @@ fn toc_v3(container: &mut Container, spine: &Spine, toc_idx: usize) -> anyhow::R
     Ok(Toc::new(entries))
 }
 
-fn toc_v2(container: &mut Container, spine: &Spine, ncx_idx: usize) -> anyhow::Result<Toc> {
+fn toc_v2(container: &Container, spine: &Spine, ncx_idx: usize) -> anyhow::Result<Toc> {
     fn visit_navpoint(
         container: &Container,
         spine: &Spine,

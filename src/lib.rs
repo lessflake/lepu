@@ -24,11 +24,8 @@ mod tests {
 
     #[test]
     fn it_works() -> anyhow::Result<()> {
-        let data = std::fs::read("./example_books/1.epub")?;
+        let data = std::fs::read("example_books/1.epub")?;
         let mut epub = Epub::new(data)?;
-        for chapter in epub.chapters() {
-            println!("{:#?}", chapter);
-        }
         epub.traverse_chapter(0, |ctx, content, _| match content {
             Content::Textual(text) => {
                 for (chunk, _) in text.style_chunks() {

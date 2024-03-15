@@ -33,8 +33,8 @@ impl Epub {
             3 => Version::V3(toc_idx.context("missing toc idx")?),
             v => anyhow::bail!("unsupported epub version ({v})"),
         };
-        let mut container = Container::new(zip, manifest, root);
-        let toc = parse::toc(&mut container, &spine, version)?;
+        let container = Container::new(zip, manifest, root);
+        let toc = parse::toc(&container, &spine, version)?;
 
         Ok(Self {
             container,
@@ -45,7 +45,7 @@ impl Epub {
     }
 
     pub fn traverse_chapter(
-        &mut self,
+        &self,
         entry: usize,
         callback: impl FnMut(content::Context<'_>, Content<'_>, Option<Align>),
     ) -> anyhow::Result<()> {
@@ -53,13 +53,13 @@ impl Epub {
     }
 
     pub fn traverse_chapter_with_replacements(
-        &mut self,
+        &self,
         entry: usize,
         replacements: &'static [(char, &'static str)],
         callback: impl FnMut(content::Context<'_>, Content<'_>, Option<Align>),
     ) -> anyhow::Result<()> {
         let manifest_idx = self.spine.get(entry).context("not in spine")?;
-        content::traverse(&mut self.container, manifest_idx, replacements, callback)?;
+        content::traverse(&self.container, manifest_idx, replacements, callback)?;
         Ok(())
     }
 
