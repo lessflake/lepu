@@ -1,4 +1,6 @@
-use anyhow::Context;
+use std::borrow::Cow;
+
+use anyhow::Context as _;
 use roxmltree::{Document, Node};
 use simplecss::StyleSheet;
 
@@ -10,7 +12,7 @@ use crate::{
 
 pub enum Content<'a> {
     Textual(Text<'a>),
-    Image,
+    Image(Item<'a>),
 }
 
 pub struct Text<'a> {
@@ -60,7 +62,8 @@ struct State {
     align: Option<Align>,
 }
 
-struct Parser<'styles, F> {
+struct Parser<'styles, 'a, F> {
+    ctx: Context<'a>,
     replacements: &'static [(char, &'static str)],
     stylesheet: StyleSheet<'styles>,
     rules: Vec<(usize, CssAttribute)>,
@@ -72,11 +75,11 @@ struct Parser<'styles, F> {
     callback: F,
 }
 
-pub fn traverse(
-    container: &mut Container,
+pub fn traverse<'a>(
+    container: &'a mut Container,
     index: usize,
     replacements: &'static [(char, &'static str)],
-    callback: impl FnMut(Content<'_>, Option<Align>),
+    callback: impl FnMut(Context<'a>, Content<'_>, Option<Align>),
 ) -> anyhow::Result<()> {
     // Retrieve chapter data
     let data = container.retrieve(index)?;
@@ -175,7 +178,10 @@ pub fn traverse(
         }
     }
 
+    let ctx = Context { index, container };
+
     let mut parser = Parser {
+        ctx,
         replacements,
         stylesheet,
         rules,
@@ -191,9 +197,39 @@ pub fn traverse(
     Ok(())
 }
 
-impl<'styles, F> Parser<'styles, F>
+#[derive(Clone)]
+pub struct Context<'a> {
+    index: usize,
+    container: &'a Container,
+}
+
+pub struct Item<'a> {
+    index: usize,
+    mime: &'a str,
+}
+
+impl Item<'_> {
+    pub fn mime(&self) -> &str {
+        self.mime
+    }
+}
+
+impl<'a> Context<'a> {
+    pub fn load(&self, item: &Item) -> anyhow::Result<Cow<'a, [u8]>> {
+        let Item { index, .. } = item;
+        self.container.retrieve(*index)
+    }
+
+    fn resolve_hyperlink(&self, href: &str) -> anyhow::Result<Item> {
+        let index = self.container.resolve_hyperlink(self.index, href)?;
+        let mime = &self.container.item(index).unwrap().mime();
+        Ok(Item { index, mime })
+    }
+}
+
+impl<'styles, 'container, F> Parser<'styles, 'container, F>
 where
-    F: for<'a> FnMut(Content<'a>, Option<Align>),
+    F: for<'a> FnMut(Context<'container>, Content<'a>, Option<Align>),
 {
     fn update_style(&self, node: Node, state: &mut State) {
         // TODO apply style from inline style attribute
@@ -309,7 +345,7 @@ where
                 len: self.text_len,
                 kind,
             };
-            (self.callback)(Content::Textual(content), state.align);
+            (self.callback)(self.ctx.clone(), Content::Textual(content), state.align);
         }
     }
 
@@ -330,7 +366,12 @@ where
                 self.emit_text(TextKind::Quote, &state);
             }
             n if n == "image" || (n == "img" && node.has_attribute("src")) => {
-                (self.callback)(Content::Image, state.align);
+                let href = node.attribute("src").unwrap();
+                if let Ok(item) = self.ctx.resolve_hyperlink(href) {
+                    // println!("{:?}", item);
+                    // let data = container.retrieve(item);
+                    (self.callback)(self.ctx.clone(), Content::Image(item), state.align);
+                }
             }
             _ => {
                 for child in node.children() {

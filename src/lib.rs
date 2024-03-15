@@ -29,13 +29,16 @@ mod tests {
         for chapter in epub.chapters() {
             println!("{:#?}", chapter);
         }
-        epub.traverse_chapter(4, |content, _| match content {
+        epub.traverse_chapter(0, |ctx, content, _| match content {
             Content::Textual(text) => {
                 for (chunk, _) in text.style_chunks() {
                     println!("{}", chunk);
                 }
             }
-            _ => {}
+            Content::Image(item) => {
+                let _data = ctx.load(&item).unwrap();
+                println!("{}", item.mime());
+            }
         })?;
         Ok(())
     }

@@ -47,7 +47,7 @@ impl Epub {
     pub fn traverse_chapter(
         &mut self,
         entry: usize,
-        callback: impl FnMut(Content<'_>, Option<Align>),
+        callback: impl FnMut(content::Context<'_>, Content<'_>, Option<Align>),
     ) -> anyhow::Result<()> {
         self.traverse_chapter_with_replacements(entry, &[], callback)
     }
@@ -56,7 +56,7 @@ impl Epub {
         &mut self,
         entry: usize,
         replacements: &'static [(char, &'static str)],
-        callback: impl FnMut(Content<'_>, Option<Align>),
+        callback: impl FnMut(content::Context<'_>, Content<'_>, Option<Align>),
     ) -> anyhow::Result<()> {
         let manifest_idx = self.spine.get(entry).context("not in spine")?;
         content::traverse(&mut self.container, manifest_idx, replacements, callback)?;
@@ -222,7 +222,7 @@ pub struct Item {
     name: String,
     path: Uri,
     normalized_path: String,
-    _mime: String,
+    mime: String,
 }
 
 impl Item {
@@ -232,12 +232,16 @@ impl Item {
             name,
             path,
             normalized_path,
-            _mime: mime,
+            mime,
         }
     }
 
     pub fn normalized_path(&self) -> &str {
         &self.normalized_path
+    }
+
+    pub fn mime(&self) -> &str {
+        &self.mime
     }
 }
 
@@ -282,6 +286,10 @@ impl Container {
         let item = &self.manifest.0[item];
         let data = self.zip.read(item.path.path()).unwrap();
         Ok(data)
+    }
+
+    pub fn item(&self, item: usize) -> Option<&Item> {
+        self.manifest.0.get(item)
     }
 
     pub fn item_uri(&self, idx: usize) -> &Uri {
