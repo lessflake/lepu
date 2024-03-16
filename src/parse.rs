@@ -1,5 +1,5 @@
 use anyhow::Context;
-use roxmltree::{Document, Node};
+use roxmltree::{Document, Node, ParsingOptions};
 
 use crate::{
     epub::{Chapter, Container, Item, Manifest, Metadata, Spine, Toc, Version},
@@ -15,7 +15,13 @@ pub struct Parser<'a> {
 pub fn root(zip: &Zip) -> anyhow::Result<(String, Uri)> {
     let data = zip.read("META-INF/container.xml").unwrap();
     let s = std::str::from_utf8(&data).unwrap();
-    let container = Document::parse(s)?;
+    let container = Document::parse_with_options(
+        s,
+        ParsingOptions {
+            allow_dtd: true,
+            ..Default::default()
+        },
+    )?;
 
     let rootfile_path = container
         .descendants()
@@ -31,7 +37,13 @@ pub fn root(zip: &Zip) -> anyhow::Result<(String, Uri)> {
 
 impl<'a> Parser<'a> {
     pub fn new(s: &'a str, root: Uri) -> anyhow::Result<Self> {
-        let rootfile = Document::parse(s)?;
+        let rootfile = Document::parse_with_options(
+            s,
+            ParsingOptions {
+                allow_dtd: true,
+                ..Default::default()
+            },
+        )?;
 
         Ok(Self {
             inner: rootfile,
@@ -252,7 +264,13 @@ fn toc_v3(container: &Container, spine: &Spine, toc_idx: usize) -> anyhow::Resul
 
     let data = container.retrieve(toc_idx)?;
     let s = std::str::from_utf8(&data).unwrap();
-    let xml = Document::parse(s)?;
+    let xml = Document::parse_with_options(
+        s,
+        ParsingOptions {
+            allow_dtd: true,
+            ..Default::default()
+        },
+    )?;
     let mut elements = xml.root_element().children().filter(Node::is_element);
     let _head = elements.next().context("toc missing head")?;
     let body = elements.next().context("toc missing body")?;
@@ -347,7 +365,13 @@ fn toc_v2(container: &Container, spine: &Spine, ncx_idx: usize) -> anyhow::Resul
 
     let data = container.retrieve(ncx_idx)?;
     let s = std::str::from_utf8(&data).unwrap();
-    let xml = Document::parse(s).unwrap();
+    let xml = Document::parse_with_options(
+        s,
+        ParsingOptions {
+            allow_dtd: true,
+            ..Default::default()
+        },
+    )?;
 
     let nav_map = xml
         .root_element()

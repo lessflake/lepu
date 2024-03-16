@@ -117,7 +117,13 @@ pub fn traverse<'a>(
             };
 
             s = s.replace(needle, replacement);
-            Document::parse(&s)
+            Document::parse_with_options(
+                &s,
+                ParsingOptions {
+                    allow_dtd: true,
+                    ..Default::default()
+                },
+            )
         }
         x => x,
     }?;
