@@ -1,5 +1,10 @@
+// Small implementation of extracting ZIP archives, making assumptions
+// based on restrictions applied to [OCF ZIP containers](https://www.w3.org/TR/epub-33/#dfn-ocf-zip-container)
+// and only implementing the bare minimum featureset required for this library.
+
 use std::{borrow::Cow, collections::BTreeMap};
 
+// Byte sequence used to identify the end of central directory record.
 const MAGIC: &[u8] = &[0x50, 0x4b, 0x05, 0x06];
 
 trait ByteSliceExt {
@@ -95,26 +100,8 @@ impl Zip {
     }
 }
 
-// #[cfg(not(target_arch = "wasm32"))]
 fn deflate(payload: &[u8]) -> Option<Vec<u8>> {
     zune_inflate::DeflateDecoder::new(payload)
         .decode_deflate()
         .ok()
 }
-
-// #[cfg(target_arch = "wasm32")]
-// #[wasm_bindgen::prelude::wasm_bindgen(inline_js = r#"
-//     export function js_deflate(buf) {
-//         const ds = await new Response(buf).body.pipeThrough(new DecompressionStream("deflate-raw"));
-//         const out = await new Response(ds).arrayBuffer();
-//         return out;
-//     }
-// "#)]
-// extern "C" {
-//     fn js_deflate(_: &[u8]) -> Vec<u8>;
-// }
-
-// #[cfg(target_arch = "wasm32")]
-// fn deflate(payload: &[u8]) -> Option<Vec<u8>> {
-//     Some(js_deflate(payload))
-// }

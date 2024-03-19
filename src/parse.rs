@@ -7,11 +7,13 @@ use crate::{
     zip::Zip,
 };
 
+/// Parses EPUB data into corresponding structures.
 pub struct Parser<'a> {
     inner: Document<'a>,
     root: Uri,
 }
 
+/// Extract the path of the rootfile and the root of the container.
 pub fn root(zip: &Zip) -> anyhow::Result<(String, Uri)> {
     let data = zip.read("META-INF/container.xml").unwrap();
     let s = std::str::from_utf8(&data).unwrap();
@@ -170,6 +172,7 @@ impl<'a> Parser<'a> {
 }
 
 pub fn toc(container: &Container, spine: &Spine, version: Version) -> anyhow::Result<Toc> {
+    // v2 EPUBs expoe the ToC in an NCX file, while v3 expose it with a nav element
     Ok(match version {
         Version::V2(ncx_idx) => toc_v2(container, spine, ncx_idx)?,
         Version::V3(toc_idx) => toc_v3(container, spine, toc_idx)?,
@@ -284,6 +287,7 @@ fn toc_v3(container: &Container, spine: &Spine, toc_idx: usize) -> anyhow::Resul
         .context("toc missing navlist")?;
     let toc_uri = container.item_uri(toc_idx);
 
+    // table of contents is a tree structure, so use recursive tree traversal
     visit_entries(container, spine, toc_uri, &mut entries, list, 0, &mut 0)?;
 
     Ok(Toc::new(entries))

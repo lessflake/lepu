@@ -15,7 +15,6 @@ pub use content::{Align, Content, Text, TextKind};
 
 mod parse;
 mod uri;
-mod util;
 mod zip;
 
 #[cfg(test)]
@@ -34,7 +33,6 @@ mod tests {
             }
             Content::Image(item) => {
                 let _data = ctx.load(&item).unwrap();
-                println!("{}", item.mime());
             }
         })?;
         Ok(())

@@ -10,6 +10,7 @@ use crate::{
     Align, Author, Content,
 };
 
+/// Represents an EPUB document.
 pub struct Epub {
     container: Container,
     metadata: Metadata,
@@ -18,6 +19,7 @@ pub struct Epub {
 }
 
 impl Epub {
+    /// Parse raw bytes into an [`Epub`].
     pub fn new(e: Vec<u8>) -> anyhow::Result<Self> {
         let zip = Zip::new(e).unwrap();
         let (path, uri) = parse::root(&zip)?;
@@ -44,6 +46,9 @@ impl Epub {
         })
     }
 
+    /// Traverses an EPUB content document (i.e. an XML tree), keeping track
+    /// of current style applied and calling `callback` for every atom of content,
+    /// i.e. every header, paragraph and image.
     pub fn traverse_chapter(
         &self,
         entry: usize,
@@ -52,6 +57,9 @@ impl Epub {
         self.traverse_chapter_with_replacements(entry, &[], callback)
     }
 
+    /// Same as [`traverse_chapter`], but takes an array of pairs of `char`s to
+    /// scan for and `&str`s to replace them with, i.e. if it is necessary to
+    /// convert unicode `…` (ellipsis) characters into the literal `...`.
     pub fn traverse_chapter_with_replacements(
         &self,
         entry: usize,
@@ -63,41 +71,51 @@ impl Epub {
         Ok(())
     }
 
+    /// The title of this EPUB document.
     pub fn title(&self) -> &str {
         &self.metadata.title
     }
 
+    /// The author of this EPUB document.
     pub fn author(&self) -> Option<&Author> {
         self.metadata.creators.first()
     }
 
+    /// The unique identifier of this EPUB document.
     pub fn identifier(&self) -> &str {
         &self.metadata.identifier
     }
 
+    /// The language of this EPUB document.
     pub fn language(&self) -> &str {
         &self.metadata.language
     }
 
+    /// An iterator over entries in the table of contents.
     pub fn chapters(&self) -> impl Iterator<Item = &Chapter> {
         self.toc.0.iter()
     }
 
+    /// Get a table of contents entry from its index in the table of contents.
     pub fn chapter_by_toc_index(&self, idx: usize) -> Option<&Chapter> {
         self.toc.entry(idx)
     }
 
+    /// The number of entries in the table of contents.
     pub fn chapter_count(&self) -> usize {
         self.toc.0.len()
     }
 
+    /// The number of content documents in this EPUB document.
     pub fn document_count(&self) -> usize {
         self.spine.0.len()
     }
 }
 
+/// An EPUB's spine.
+/// See `https://www.w3.org/TR/epub-33/#sec-spine-elem`.
 #[derive(Debug)]
-pub struct Spine(Vec<usize>);
+pub(crate) struct Spine(Vec<usize>);
 
 impl Spine {
     pub fn new(order: Vec<usize>) -> Self {
@@ -113,15 +131,21 @@ impl Spine {
     }
 }
 
+/// An EPUB's table of contents.
+/// See `https://www.w3.org/TR/epub-33/#sec-nav-toc`.
+/// Note that with EPUB version 2, this derives from the NCX.
+/// See `https://www.w3.org/TR/epub-33/#sec-opf2-ncx`.
 #[derive(Debug)]
-pub struct Toc(Vec<Chapter>);
+pub(crate) struct Toc(Vec<Chapter>);
 
 impl Toc {
     pub fn new(entries: Vec<Chapter>) -> Self {
         Self(entries)
     }
 
+    /// Retrieve the entry at position `idx`.
     pub fn entry(&self, idx: usize) -> Option<&Chapter> {
+        // Requires traversing the tree to find the nth element.
         fn nth_inorder<'a>(
             entries: &'a [Chapter],
             goal: usize,
@@ -132,6 +156,7 @@ impl Toc {
                     return Some(node);
                 }
                 *cur += 1;
+                // `num_children` includes children owned by children, recursively.
                 if goal < *cur + node.num_children {
                     return nth_inorder(&node.children, goal, cur);
                 }
@@ -145,6 +170,7 @@ impl Toc {
     }
 }
 
+/// An entry in the table of contents ([`Toc`]).
 #[derive(Debug)]
 pub struct Chapter {
     name: String,
@@ -153,8 +179,9 @@ pub struct Chapter {
     toc_index: usize,
     depth: usize,
 
-    num_children: usize,
+    // As entries can have subentries, this is represented as a tree.
     children: Vec<Chapter>,
+    num_children: usize,
 }
 
 impl Chapter {
@@ -211,16 +238,21 @@ pub struct Metadata {
     pub creators: Vec<crate::Author>,
 }
 
+/// An EPUB's major version.
 #[derive(Debug, Copy, Clone)]
 pub enum Version {
     V2(usize),
     V3(usize),
 }
 
+/// Metadata for an item in an EPUB manifest.
 #[derive(Debug, Clone)]
 pub struct Item {
     name: String,
     path: Uri,
+    // To avoid recalculation when a case-insensitive comparison and/or or
+    // comparison treating percent-encoded and non-percent-encoded paths
+    // as equal needs to be made.
     normalized_path: String,
     mime: String,
 }
@@ -245,6 +277,8 @@ impl Item {
     }
 }
 
+/// An EPUB's manifest. This is a list of resources in an EPUB document.
+/// See `https://www.w3.org/TR/epub-33/#sec-manifest-elem`.
 #[derive(Debug)]
 pub struct Manifest(Vec<Item>);
 
@@ -263,6 +297,8 @@ impl Manifest {
     }
 }
 
+/// An abstraction over an EPUB container. Allows for the extraction of items listed in a `Manifest`
+/// from the underlying [OCF ZIP container](https://www.w3.org/TR/epub-33/#dfn-ocf-zip-container).
 pub struct Container {
     zip: Zip,
     manifest: Manifest,
@@ -282,26 +318,31 @@ impl Container {
         &self.root
     }
 
+    /// Retrieve a resource from the container, given an index of an item
+    /// in its [`Manifest`].
     pub fn retrieve(&self, item: usize) -> anyhow::Result<Cow<[u8]>> {
         let item = &self.manifest.0[item];
         let data = self.zip.read(item.path.path()).unwrap();
         Ok(data)
     }
 
+    /// Retrieves metadata about an item in this container's [`Manifest`].
     pub fn item(&self, item: usize) -> Option<&Item> {
         self.manifest.0.get(item)
     }
 
+    /// Retrieves an item's path in the OCF ZIP container.
     pub fn item_uri(&self, idx: usize) -> &Uri {
         &self.manifest.0[idx].path
     }
 
+    /// Locate a resource by following a relative hyperlink from a given item index.
     pub fn resolve_hyperlink(&self, item: usize, href: &str) -> anyhow::Result<usize> {
-        let item = &self.manifest.0[item];
-        let url = item.path.join_from_parent(href)?;
+        let url = self.item_uri(item).join_from_parent(href)?;
         self.manifest.item_idx(&url).context("broken epub href")
     }
 
+    /// Iterator over [`Item`]s listed in this container's [`Manifest`].
     pub fn items(&self) -> impl Iterator<Item = &Item> {
         self.manifest.0.iter()
     }

@@ -2,6 +2,9 @@ use std::path::{Component, Path, PathBuf};
 
 use anyhow::Context;
 
+/// Representation of the path of a resource in a [`Container`].
+/// Main use is to compute the result of following relative paths, as
+/// found in EPUB content documents to refer to resources.
 #[derive(Debug, Clone)]
 pub struct Uri(PathBuf);
 
@@ -12,12 +15,15 @@ impl Uri {
         Ok(Uri(path.parent().context("rootfile no parent")?.to_owned()))
     }
 
+    /// Compute the result of following a relative path, starting at the
+    /// parent of this path.
     pub fn join_from_parent(&self, other: &str) -> anyhow::Result<Self> {
         let mut out = self.clone();
         out.0.pop();
         self.join_(other, out)
     }
 
+    /// Compute the result of following a relative path.
     pub fn join(&self, other: &str) -> anyhow::Result<Self> {
         let out = self.clone();
         self.join_(other, out)

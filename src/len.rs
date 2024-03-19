@@ -1,3 +1,6 @@
+/// Convenience type to keep track of the length of a `str` in terms of
+/// both bytes and `char`s.
+// TODO: This is likely to be vestigial at this point. Consider removal.
 #[derive(Debug, Copy, Clone, Default, PartialEq, Eq)]
 pub struct Len {
     pub bytes: usize,

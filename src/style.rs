@@ -1,6 +1,7 @@
 use std::marker::PhantomData;
 
 bitflags::bitflags! {
+    /// Bitflags representing the styling of textual content.
     #[derive(Debug, Default, Copy, Clone, PartialEq, Eq, PartialOrd, Ord)]
     pub struct Style: u8 {
         const ITALIC = 0b1;
@@ -8,6 +9,9 @@ bitflags::bitflags! {
     }
 }
 
+/// Tracks what styles are applied to what text ranges for a specific text.
+/// Allows easy iteration over chunks of styled text.
+// TODO: consider replacing with some form of interval tree
 #[derive(Debug)]
 pub struct Styling<T> {
     starts: Vec<Range<Start, T>>,
@@ -19,55 +23,6 @@ impl<T> Styling<T> {
         Builder { styles: Vec::new() }
     }
 }
-
-// impl<T> Styling<T>
-// where
-//     T: std::ops::AddAssign + std::ops::SubAssign + Ord + Copy,
-// {
-//     pub fn add_from_disjoint_other(&mut self, mut other: Self, offset: T) {
-//         other.offset(offset);
-//         let Self { starts, ends } = other;
-//         self.starts.extend(starts);
-//         self.ends.extend(ends);
-//     }
-
-//     fn offset(&mut self, offset: T) {
-//         for thing in self
-//             .starts
-//             .iter_mut()
-//             .flat_map(|s| [&mut s.range.start, &mut s.range.end])
-//             .chain(
-//                 self.ends
-//                     .iter_mut()
-//                     .flat_map(|s| [&mut s.range.start, &mut s.range.end]),
-//             )
-//         {
-//             *thing += offset;
-//         }
-//     }
-
-//     pub fn offset_after(&mut self, i: T, removed: T, added: T) {
-//         for [start, end] in self
-//             .starts
-//             .iter_mut()
-//             .map(|s| [&mut s.range.start, &mut s.range.end])
-//             .chain(
-//                 self.ends
-//                     .iter_mut()
-//                     .map(|s| [&mut s.range.start, &mut s.range.end]),
-//             )
-//         {
-//             if *start > i {
-//                 *start -= removed;
-//                 *start += added;
-//             }
-//             if *end > i {
-//                 *end -= removed;
-//                 *end += added;
-//             }
-//         }
-//     }
-// }
 
 pub struct Builder<T> {
     styles: Vec<(Style, std::ops::Range<T>)>,
@@ -115,6 +70,7 @@ impl<T> Styling<T>
 where
     T: Ord + Copy + std::ops::Sub<T, Output = T>,
 {
+    /// Iterate over chunks of styled text.
     pub fn iter(&self, start: T, end: T) -> StylingIter<'_, T> {
         assert!(end >= start);
         let end_idx = self.ends.partition_point(|s| s.inner.end <= start);

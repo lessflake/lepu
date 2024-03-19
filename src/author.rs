@@ -1,3 +1,4 @@
+/// Loosely standardised representation of author name.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Author {
     first: String,
@@ -6,6 +7,15 @@ pub struct Author {
 }
 
 impl Author {
+    /// Parse common EPUB author name representations into a standardised format.
+    ///
+    /// Attempts to account for shortenings with or without periods, differing
+    /// capitalisation and surname-first formats.
+    ///
+    /// Does not attempt to reconcile shortenings with full names, i.e.
+    /// `JRR Tolkien` is not the same as `John RR Tolkien`, `John Tolkien`
+    /// or `John Ronald Reuel Tolkien`. It is the same as `J. R. R. Tolkien`,
+    /// `J.R.R. Tolkien` and `Tolkien, J.R.R.`.
     pub(crate) fn parse(raw: &str) -> Option<Self> {
         let mut raw = raw.trim();
         if raw.is_empty() || raw == "Unknown" {
@@ -52,7 +62,6 @@ impl Author {
             surname: capitalise(surname.trim_matches(',').trim()),
         })
     }
-    // }
 }
 
 impl std::fmt::Display for Author {
@@ -85,4 +94,56 @@ fn capitalise(s: &str) -> String {
         buf.pop();
     }
     buf
+}
+
+#[cfg(test)]
+mod test {
+    use super::*;
+
+    #[test]
+    fn double_middle() {
+        let expected = Author {
+            first: "Alice".to_string(),
+            middles: Some("A. B.".to_string()),
+            surname: "Bob".to_string(),
+        };
+        let examples = [
+            "Alice A.B. Bob",
+            "Alice AB Bob",
+            "ALICE A. B. BOB",
+            "alice a b bob",
+        ];
+        for ex in examples {
+            let author = Author::parse(ex).unwrap();
+            assert_eq!(author, expected);
+        }
+    }
+
+    #[test]
+    fn no_middle() {
+        let expected = Author {
+            first: "Alice".to_string(),
+            middles: None,
+            surname: "Bob".to_string(),
+        };
+        let examples = ["Alice Bob", "Alice Bob", "ALICE BOB", "alice bob"];
+        for ex in examples {
+            let author = Author::parse(ex).unwrap();
+            assert_eq!(author, expected);
+        }
+    }
+
+    #[test]
+    fn triple_shortening() {
+        let expected = Author {
+            first: "A.".to_string(),
+            middles: Some("A. B.".to_string()),
+            surname: "Bob".to_string(),
+        };
+        let examples = ["AAB Bob", "Bob, AAB", "A.A.B. Bob", "A. A.B. Bob"];
+        for ex in examples {
+            let author = Author::parse(ex).unwrap();
+            assert_eq!(author, expected);
+        }
+    }
 }

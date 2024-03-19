@@ -10,11 +10,13 @@ use crate::{
     style::{self, Style, Styling},
 };
 
+// An item of content, such as a paragraph or an image.
 pub enum Content<'a> {
     Textual(Text<'a>),
     Image(Item<'a>),
 }
 
+/// Represents a unit of textual content, such as a paragraph.
 pub struct Text<'a> {
     kind: TextKind,
     text: &'a str,
@@ -23,14 +25,17 @@ pub struct Text<'a> {
 }
 
 impl<'a> Text<'a> {
+    /// Get raw text content.
     pub fn text(&self) -> &str {
         self.text
     }
 
+    /// What kind of text element does this represent?
     pub fn kind(&self) -> TextKind {
         self.kind
     }
 
+    /// Iterate through text chunked by its [`Style`].
     pub fn style_chunks(&self) -> impl Iterator<Item = (&'a str, Style)> + '_ {
         let mut cur = Len::default();
         self.styling.iter(cur, self.len).map(move |(style, len)| {
@@ -41,6 +46,7 @@ impl<'a> Text<'a> {
     }
 }
 
+/// What kind of text element [`Text`] represents.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum TextKind {
     Header,
@@ -48,6 +54,7 @@ pub enum TextKind {
     Quote,
 }
 
+/// Visual alignment of an item of content.
 #[derive(Debug, Clone, Copy)]
 pub enum Align {
     Left,
@@ -75,7 +82,8 @@ struct Parser<'styles, 'a, F> {
     callback: F,
 }
 
-pub fn traverse<'a>(
+// EPUB content document traversal implementation.
+pub(crate) fn traverse<'a>(
     container: &'a Container,
     index: usize,
     replacements: &'static [(char, &'static str)],
@@ -84,8 +92,6 @@ pub fn traverse<'a>(
     // Retrieve chapter data
     let data = container.retrieve(index)?;
     let mut s = String::from_utf8(data.into_owned()).unwrap();
-
-    // println!("{}", data);
 
     // Parse XML document into tree
     // Note that documents are XHTML, so an XML parser is applicable.
@@ -209,29 +215,35 @@ pub fn traverse<'a>(
     Ok(())
 }
 
+/// Context through which resources can be loaded from an `EPUB` through
+/// [`Item`] handles.
 #[derive(Clone)]
 pub struct Context<'a> {
     index: usize,
     container: &'a Container,
 }
 
+/// A handle to an `EPUB` manifest item.
 pub struct Item<'a> {
     index: usize,
     mime: &'a str,
 }
 
 impl Item<'_> {
+    /// The MIME type of the resource this item represents.
     pub fn mime(&self) -> &str {
         self.mime
     }
 }
 
 impl<'a> Context<'a> {
+    /// Load a given [`Item`] from the EPUB container.
     pub fn load(&self, item: &Item) -> anyhow::Result<Cow<'a, [u8]>> {
         let Item { index, .. } = item;
         self.container.retrieve(*index)
     }
 
+    // Locate a resource by following a relative hyperlink
     fn resolve_hyperlink(&self, href: &str) -> anyhow::Result<Item> {
         let index = self.container.resolve_hyperlink(self.index, href)?;
         let mime = &self.container.item(index).unwrap().mime();
@@ -243,11 +255,13 @@ impl<'styles, 'container, F> Parser<'styles, 'container, F>
 where
     F: for<'a> FnMut(Context<'container>, Content<'a>, Option<Align>),
 {
+    // Apply styles based on `node`'s tag and matching CSS rules
+    // TODO: apply style from inline style attribute
     fn update_style(&self, node: Node, state: &mut State) {
-        // TODO apply style from inline style attribute
         let style = &mut state.style;
         let align = &mut state.align;
 
+        // Style from CSS rules (match node's class, id)
         for added_style in self.rules.iter().filter_map(|&(i, style)| {
             self.stylesheet.rules[i]
                 .selector
@@ -260,6 +274,7 @@ where
             }
         }
 
+        // Style from tag name
         match node.tag_name().name() {
             "i" | "em" => *style |= Style::ITALIC,
             "b" | "strong" => *style |= Style::BOLD,
@@ -268,6 +283,7 @@ where
         }
     }
 
+    // Collect a chunk of text into the text buffer
     fn add_text_to_buf(&mut self, node: Node, style: Style) {
         let text = &mut self.text_buf;
 
@@ -278,6 +294,12 @@ where
         }
 
         let start = self.text_len;
+
+        // When browsers render text from the DOM, there are several rules
+        // for ignoring or squashing whitespace. These rules need to be
+        // approximated in the handling of whitespace here, to not yield
+        // improperly formatted text from EPUB XHTML documents.
+        // See https://developer.mozilla.org/en-US/docs/Web/API/Document_Object_Model/Whitespace
 
         if s.chars().next().is_some_and(|c| c.is_ascii_whitespace())
             && text.chars().last().is_some()
@@ -326,6 +348,8 @@ where
         }
     }
 
+    // Recursively process text from the given node and all
+    // its children, keeping track of any applied styles
     fn accumulate_text(&mut self, node: Node, state: &State) {
         self.text_buf.clear();
         self.text_len = Len::default();
@@ -349,6 +373,7 @@ where
         }
     }
 
+    // Call `self.callback` for a completed textual content item ([`Text`]).
     fn emit_text(&mut self, kind: TextKind, state: &State) {
         let content = Text {
             text: &self.text_buf,
@@ -359,10 +384,12 @@ where
         (self.callback)(self.ctx.clone(), Content::Textual(content), state.align);
     }
 
+    // Traverse the tree, parsing nodes into [`Content`] and emitting to `self.callback`.
     fn run(&mut self, node: Node, mut state: State) {
         self.update_style(node, &mut state);
 
         match node.tag_name().name() {
+            // Header content.
             "h1" | "h2" | "h3" | "h4" | "h5" | "h6" => {
                 self.accumulate_text(node, &state);
                 if !self.text_buf.is_empty() {
@@ -370,6 +397,7 @@ where
                     return;
                 }
             }
+            // Paragraph content.
             "p" => {
                 self.accumulate_text(node, &state);
                 if !self.text_buf.is_empty() {
@@ -377,6 +405,7 @@ where
                     return;
                 }
             }
+            // Quote content.
             "blockquote" => {
                 self.accumulate_text(node, &state);
                 if !self.text_buf.is_empty() {
@@ -384,6 +413,7 @@ where
                     return;
                 }
             }
+            // Image content.
             n if n == "image" || (n == "img" && node.has_attribute("src")) => {
                 let attr = match n {
                     "img" => node.attribute("src"),
