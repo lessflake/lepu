@@ -92,7 +92,7 @@ impl Epub {
     }
 
     /// An iterator over entries in the table of contents.
-    pub fn chapters(&self) -> impl Iterator<Item = &Chapter> {
+    pub fn chapters(&self) -> impl Iterator<Item = &Chapter> + DoubleEndedIterator {
         self.toc.0.iter()
     }
 
@@ -126,7 +126,7 @@ impl Spine {
         self.0.get(idx).copied()
     }
 
-    pub fn manifest_indices(&self) -> impl Iterator<Item = usize> + '_ {
+    pub fn manifest_indices(&self) -> impl Iterator<Item = usize> + '_ + DoubleEndedIterator {
         self.0.iter().copied()
     }
 }
@@ -217,7 +217,7 @@ impl Chapter {
         !self.children.is_empty()
     }
 
-    pub fn children(&self) -> impl Iterator<Item = &Self> {
+    pub fn children(&self) -> impl Iterator<Item = &Self> + DoubleEndedIterator {
         self.children.iter()
     }
 
@@ -343,7 +343,7 @@ impl Container {
     }
 
     /// Iterator over [`Item`]s listed in this container's [`Manifest`].
-    pub fn items(&self) -> impl Iterator<Item = &Item> {
+    pub fn items(&self) -> impl Iterator<Item = &Item> + DoubleEndedIterator {
         self.manifest.0.iter()
     }
 }
