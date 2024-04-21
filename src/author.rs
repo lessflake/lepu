@@ -90,7 +90,7 @@ fn capitalise(s: &str) -> String {
             }
         }
     }
-    while buf.chars().last().unwrap().is_whitespace() {
+    while matches!(buf.chars().last(), Some(c) if c.is_whitespace()) {
         buf.pop();
     }
     buf
