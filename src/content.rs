@@ -427,6 +427,14 @@ where
                 }
                 return;
             }
+            // Treat text nodes with no markup otherwise as paragraphs.
+            n if node.is_text() => {
+                self.accumulate_text(node, &state);
+                if !self.text_buf.is_empty() {
+                    self.emit_text(TextKind::Paragraph, &state);
+                    return;
+                }
+            }
             _ => {}
         }
 
