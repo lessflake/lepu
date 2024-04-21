@@ -172,7 +172,7 @@ impl<'a> Parser<'a> {
 }
 
 pub fn toc(container: &Container, spine: &Spine, version: Version) -> anyhow::Result<Toc> {
-    // v2 EPUBs expoe the ToC in an NCX file, while v3 expose it with a nav element
+    // v2 EPUBs expose the ToC in an NCX file, while v3 expose it with a nav element
     Ok(match version {
         Version::V2(ncx_idx) => toc_v2(container, spine, ncx_idx)?,
         Version::V3(toc_idx) => toc_v3(container, spine, toc_idx)?,
