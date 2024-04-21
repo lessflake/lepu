@@ -58,3 +58,34 @@ impl Uri {
             .to_lowercase()
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn from_file() {
+        let a = Uri::directory_of("foo/bar.baz").unwrap();
+        let b = Uri::directory_of("foo/bar").unwrap();
+        assert_eq!(a.path(), b.path());
+        assert_eq!(b.path(), "foo");
+    }
+
+    #[test]
+    fn path_following() {
+        let uri = Uri::directory_of("foo/bar.baz").unwrap();
+        let beginning = uri.join("bar.baz").unwrap();
+        assert_eq!(beginning.path(), "foo/bar.baz");
+        let elsewhere = uri.join_from_parent("bar/foo").unwrap();
+        assert_eq!(elsewhere.path(), "bar/foo");
+    }
+
+    #[test]
+    fn normalized_comparison() {
+        let uri = Uri::directory_of("foo/bar.baz").unwrap();
+        let a = uri.join("Hello 안녕").unwrap();
+        let b = uri.join("hello%20%EC%95%88%EB%85%95").unwrap();
+        assert_ne!(a.path(), b.path());
+        assert_eq!(a.normalize_url(), b.normalize_url());
+    }
+}
